@@ -1,0 +1,17 @@
+#!/bin/sh
+#
+# $FreeBSD$
+#
+
+# PROVIDE: sensorsd
+# REQUIRE: syslogd
+#
+
+. /etc/rc.subr
+
+name="sensorsd"
+rcvar="sensorsd_enable"
+command="/usr/sbin/${name}"
+
+load_rc_config $name
+run_rc_command "$1"

@@ -44,6 +44,7 @@ BIN1=	crontab \
 	rc.subr \
 	remote \
 	rpc \
+	sensorsd.conf \
 	services \
 	shells \
 	sysctl.conf \

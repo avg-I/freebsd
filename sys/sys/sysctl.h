@@ -585,7 +585,8 @@ SYSCTL_ALLOWED_TYPES(UINT64, uint64_t *a; unsigned long long *b; );
 #define	HW_FLOATINGPT	10		/* int: has HW floating point? */
 #define	HW_MACHINE_ARCH	11		/* string: machine architecture */
 #define	HW_REALMEM	12		/* int: 'real' memory */
-#define	HW_MAXID	13		/* number of valid hw ids */
+#define	HW_SENSORS	13		/* node: hardware monitors */
+#define	HW_MAXID	14		/* number of valid hw ids */
 
 /*
  * CTL_USER definitions

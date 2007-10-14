@@ -289,6 +289,22 @@ is set to
 these are the flags to pass to the
 .Xr powerd 8
 daemon.
+.It Va sensorsd_enable
+.Pq Vt bool
+Set to
+.Dq Li NO
+by default.
+Setting this to
+.Dq Li YES
+enables
+.Xr sensorsd 8 ,
+a sensors monitoring and logging daemon.
+.It Va sensorsd_flags
+.Pq Vt str
+Empty by default.
+This variable contains additional flags passed to the
+.Xr sensorsd 8
+program.
 .It Va tmpmfs
 Controls the creation of a
 .Pa /tmp
@@ -4515,6 +4531,7 @@ The default is 30.
 .Xr rwhod 8 ,
 .Xr savecore 8 ,
 .Xr sdpd 8 ,
+.Xr sensorsd 8 ,
 .Xr sshd 8 ,
 .Xr swapon 8 ,
 .Xr sysctl 8 ,

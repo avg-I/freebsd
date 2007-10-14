@@ -134,6 +134,7 @@ FILES=	DAEMON \
 	sdpd \
 	securelevel \
 	sendmail \
+	sensorsd \
 	serial \
 	sppp \
 	${_sshd} \
