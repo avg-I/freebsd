@@ -203,6 +203,7 @@ MAN=	aac.4 \
 	iscsi_initiator.4 \
 	isp.4 \
 	ispfw.4 \
+	${_it.4} \
 	iwi.4 \
 	iwifw.4 \
 	iwn.4 \
@@ -223,6 +224,7 @@ MAN=	aac.4 \
 	lge.4 \
 	${_lindev.4} \
 	${_linux.4} \
+	lm.4 \
 	lmc.4 \
 	lo.4 \
 	lp.4 \
@@ -781,6 +783,7 @@ _if_vxge.4=	if_vxge.4
 _if_wpi.4=	if_wpi.4
 _ipmi.4=	ipmi.4
 _io.4=		io.4
+_it.4=		it.4
 _lindev.4=	lindev.4
 _linux.4=	linux.4
 _ndis.4=	ndis.4

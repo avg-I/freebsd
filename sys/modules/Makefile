@@ -166,6 +166,7 @@ SUBDIR=	\
 	iscsi_initiator \
 	isp \
 	${_ispfw} \
+	${_it} \
 	${_iwi} \
 	${_iwifw} \
 	${_iwn} \
@@ -190,6 +191,7 @@ SUBDIR=	\
 	${_linprocfs} \
 	${_linsysfs} \
 	${_linux} \
+	${_lm} \
 	lmc \
 	lpt \
 	mac_biba \
@@ -596,6 +598,7 @@ _ipw=		ipw
 _ipwfw=		ipwfw
 .endif
 _isci=		isci
+_it=		it
 _iwi=		iwi
 .if ${MK_SOURCELESS_UCODE} != "no"
 _iwifw=		iwifw
@@ -606,6 +609,7 @@ _iwnfw=		iwnfw
 .endif
 _ixgb=		ixgb
 _ixgbe=		ixgbe
+_lm=		lm
 _mly=		mly
 _nfe=		nfe
 _nvd=		nvd
@@ -705,6 +709,7 @@ _ipw=		ipw
 _ipwfw=		ipwfw
 .endif
 _isci=		isci
+_it=		it
 _iwi=		iwi
 .if ${MK_SOURCELESS_UCODE} != "no"
 _iwifw=		iwifw
@@ -719,6 +724,7 @@ _lindev=	lindev
 _linprocfs=	linprocfs
 _linsysfs=	linsysfs
 _linux=		linux
+_lm=		lm
 _mly=		mly
 .if ${MK_OFED} != "no" || defined(ALL_MODULES)
 _mlx4=		mlx4
