@@ -61,23 +61,22 @@ __FBSDID("$FreeBSD$");
 #define RFACT_NONE	10000
 #define RFACT(x, y)	(RFACT_NONE * ((x) + (y)) / (y))
 
-int it_probe(struct device *);
-int it_attach(struct device *);
-int it_detach(struct device *);
-u_int8_t it_readreg(struct it_softc *, int);
-void it_writereg(struct it_softc *, int, int);
-void it_setup_volt(struct it_softc *, int, int);
-void it_setup_temp(struct it_softc *, int, int);
-void it_setup_fan(struct it_softc *, int, int);
+static int it_probe(struct device *);
+static int it_attach(struct device *);
+static int it_detach(struct device *);
+static u_int8_t it_readreg(struct it_softc *, int);
+static void it_writereg(struct it_softc *, int, int);
+static void it_setup_volt(struct it_softc *, int, int);
+static void it_setup_temp(struct it_softc *, int, int);
+static void it_setup_fan(struct it_softc *, int, int);
 
-void it_generic_stemp(struct it_softc *, struct ksensor *);
-void it_generic_svolt(struct it_softc *, struct ksensor *);
-void it_generic_fanrpm(struct it_softc *, struct ksensor *);
+static void it_generic_stemp(struct it_softc *, struct ksensor *);
+static void it_generic_svolt(struct it_softc *, struct ksensor *);
+static void it_generic_fanrpm(struct it_softc *, struct ksensor *);
 
-void it_refresh_sensor_data(struct it_softc *);
-void it_refresh(void *);
+static void it_refresh_sensor_data(struct it_softc *);
+static void it_refresh(void *);
 
-extern struct cfdriver it_cd;
 
 static device_method_t it_methods[] = {
 	/* Methods from the device interface */
@@ -100,7 +99,7 @@ static devclass_t it_devclass;
 DRIVER_MODULE(it, isa, it_driver, it_devclass, NULL, NULL);
 
 
-const int it_vrfact[] = {
+static const int it_vrfact[] = {
 	RFACT_NONE,
 	RFACT_NONE,
 	RFACT_NONE,
@@ -112,13 +111,11 @@ const int it_vrfact[] = {
 	RFACT_NONE
 };
 
-int
+static int
 it_probe(struct device *dev)
 {
 	struct resource *iores;
 	int iorid = 0;
-	bus_space_tag_t iot;
-	bus_space_handle_t ioh;
 	u_int8_t cr;
 
 	iores = bus_alloc_resource(dev, SYS_RES_IOPORT, &iorid,
@@ -127,12 +124,10 @@ it_probe(struct device *dev)
 		DPRINTF(("%s: can't map i/o space\n", __func__));
 		return 1;
 	}
-	iot = rman_get_bustag(iores);
-	ioh = rman_get_bushandle(iores);
 
 	/* Check Vendor ID */
-	bus_space_write_1(iot, ioh, ITC_ADDR, ITD_CHIPID);
-	cr = bus_space_read_1(iot, ioh, ITC_DATA);
+	bus_write_1(iores, ITC_ADDR, ITD_CHIPID);
+	cr = bus_read_1(iores, ITC_DATA);
 	bus_release_resource(dev, SYS_RES_IOPORT, iorid, iores);
 	DPRINTF(("it: vendor id 0x%x\n", cr));
 	if (cr != IT_ID_IT87)
@@ -141,7 +136,7 @@ it_probe(struct device *dev)
 	return 0;
 }
 
-int
+static int
 it_attach(struct device *dev)
 {
 	struct it_softc *sc = device_get_softc(dev);
@@ -155,8 +150,6 @@ it_attach(struct device *dev)
 		device_printf(dev, "can't map i/o space\n");
 		return 1;
 	}
-	sc->sc_iot = rman_get_bustag(sc->sc_iores);
-	sc->sc_ioh = rman_get_bushandle(sc->sc_iores);
 
 	sc->numsensors = IT_NUM_SENSORS;
 
@@ -184,7 +177,7 @@ it_attach(struct device *dev)
 	return 0;
 }
 
-int
+static int
 it_detach(struct device *dev)
 {
 	struct it_softc *sc = device_get_softc(dev);
@@ -201,21 +194,21 @@ it_detach(struct device *dev)
 	return 0;
 }
 
-u_int8_t
+static u_int8_t
 it_readreg(struct it_softc *sc, int reg)
 {
-	bus_space_write_1(sc->sc_iot, sc->sc_ioh, ITC_ADDR, reg);
-	return (bus_space_read_1(sc->sc_iot, sc->sc_ioh, ITC_DATA));
+	bus_write_1(sc->sc_iores, ITC_ADDR, reg);
+	return (bus_read_1(sc->sc_iores, ITC_DATA));
 }
 
-void
+static void
 it_writereg(struct it_softc *sc, int reg, int val)
 {
-	bus_space_write_1(sc->sc_iot, sc->sc_ioh, ITC_ADDR, reg);
-	bus_space_write_1(sc->sc_iot, sc->sc_ioh, ITC_DATA, val);
+	bus_write_1(sc->sc_iores, ITC_ADDR, reg);
+	bus_write_1(sc->sc_iores, ITC_DATA, val);
 }
 
-void
+static void
 it_setup_volt(struct it_softc *sc, int start, int n)
 {
 	int i;
@@ -244,7 +237,7 @@ it_setup_volt(struct it_softc *sc, int start, int n)
 	    "VBAT");
 }
 
-void
+static void
 it_setup_temp(struct it_softc *sc, int start, int n)
 {
 	int i;
@@ -253,7 +246,7 @@ it_setup_temp(struct it_softc *sc, int start, int n)
 		sc->sensors[start + i].type = SENSOR_TEMP;
 }
 
-void
+static void
 it_setup_fan(struct it_softc *sc, int start, int n)
 {
 	int i;
@@ -262,7 +255,7 @@ it_setup_fan(struct it_softc *sc, int start, int n)
 		sc->sensors[start + i].type = SENSOR_FANRPM;
 }
 
-void
+static void
 it_generic_stemp(struct it_softc *sc, struct ksensor *sensors)
 {
 	int i, sdata;
@@ -274,7 +267,7 @@ it_generic_stemp(struct it_softc *sc, struct ksensor *sensors)
 	}
 }
 
-void
+static void
 it_generic_svolt(struct it_softc *sc, struct ksensor *sensors)
 {
 	int i, sdata;
@@ -296,7 +289,7 @@ it_generic_svolt(struct it_softc *sc, struct ksensor *sensors)
 	}
 }
 
-void
+static void
 it_generic_fanrpm(struct it_softc *sc, struct ksensor *sensors)
 {
 	int i, sdata, divisor, odivisor, ndivisor;
@@ -328,7 +321,7 @@ it_generic_fanrpm(struct it_softc *sc, struct ksensor *sensors)
  * pre:  last read occurred >= 1.5 seconds ago
  * post: sensors[] current data are the latest from the chip
  */
-void
+static void
 it_refresh_sensor_data(struct it_softc *sc)
 {
 	/* Refresh our stored data for every sensor */
@@ -337,7 +330,7 @@ it_refresh_sensor_data(struct it_softc *sc)
 	it_generic_fanrpm(sc, &sc->sensors[0]);
 }
 
-void
+static void
 it_refresh(void *arg)
 {
 	struct it_softc *sc = (struct it_softc *)arg;

@@ -58,8 +58,8 @@
 #define ITD_FANENABLE	0x13
 
 #define ITD_SENSORFANBASE	0x0d	/* Fan from 0x0d to 0x0f */
-#define ITD_SENSORVOLTBASE	0x20	/* Fan from 0x20 to 0x28 */
-#define ITD_SENSORTEMPBASE	0x29	/* Fan from 0x29 to 0x2b */
+#define ITD_SENSORVOLTBASE	0x20	/* VIN from 0x20 to 0x28 */
+#define ITD_SENSORTEMPBASE	0x29	/* Temperature from 0x29 to 0x2b */
 
 #define ITD_VOLTMAXBASE	0x30
 #define ITD_VOLTMINBASE	0x31
@@ -80,16 +80,10 @@ struct it_softc {
 
 	struct resource *sc_iores;
 	int sc_iorid;
-	bus_space_tag_t sc_iot;
-	bus_space_handle_t sc_ioh;
 
+	u_int numsensors;
 	struct ksensor sensors[IT_NUM_SENSORS];
 	struct ksensordev sensordev;
-	u_int numsensors;
-	void (*refresh_sensor_data)(struct it_softc *);
-
-	u_int8_t (*it_readreg)(struct it_softc *, int);
-	void (*it_writereg)(struct it_softc *, int, int);
 };
 
 #endif
