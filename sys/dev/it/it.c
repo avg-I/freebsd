@@ -73,6 +73,7 @@ static void it_setup_fan(struct it_softc *, int, int);
 static void it_generic_stemp(struct it_softc *, struct ksensor *);
 static void it_generic_svolt(struct it_softc *, struct ksensor *);
 static void it_generic_fanrpm(struct it_softc *, struct ksensor *);
+static void it_16bit_fanrpm(struct it_softc *, struct ksensor *);
 
 static void it_refresh_sensor_data(struct it_softc *);
 static void it_refresh(void *);
@@ -152,6 +153,14 @@ it_attach(struct device *dev)
 	}
 
 	sc->numsensors = IT_NUM_SENSORS;
+
+	cr = it_readreg(sc, ITD_COREID);
+	if (cr == IT_COREID_12) { /* XXX perhaps >= ? */
+		/* Force use of 16-bit fan counters. */
+		cr = it_readreg(sc, ITD_FAN_CTL16);
+		it_writereg(sc, ITD_FAN_CTL16, cr | IT_FAN16_MASK);
+		sc->fan16bit = 1;
+	}
 
 	it_setup_fan(sc, 0, 3);
 	it_setup_volt(sc, 3, 9);
@@ -317,6 +326,26 @@ it_generic_fanrpm(struct it_softc *sc, struct ksensor *sensors)
 		it_writereg(sc, ITD_FAN, ndivisor);
 }
 
+/* Chips with 0x12 core support 16-bit fan counter with fixed divisor of 2. */
+static void
+it_16bit_fanrpm(struct it_softc *sc, struct ksensor *sensors)
+{
+	unsigned int sdata;
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		sdata = it_readreg(sc, ITD_SENSORFANBASE_EXT + i);
+		sdata <<= 8;
+		sdata |= it_readreg(sc, ITD_SENSORFANBASE + i);
+		if (sdata != 0xffff && sdata != 0) {
+			sensors[i].flags &= ~SENSOR_FINVALID;
+			sensors[i].value = (1350000 / 2) / sdata;
+		}
+		else
+			sensors[i].flags |= SENSOR_FINVALID;
+	}
+}
+
 /*
  * pre:  last read occurred >= 1.5 seconds ago
  * post: sensors[] current data are the latest from the chip
@@ -327,7 +356,10 @@ it_refresh_sensor_data(struct it_softc *sc)
 	/* Refresh our stored data for every sensor */
 	it_generic_stemp(sc, &sc->sensors[12]);
 	it_generic_svolt(sc, &sc->sensors[3]);
-	it_generic_fanrpm(sc, &sc->sensors[0]);
+	if (sc->fan16bit)
+		it_16bit_fanrpm(sc, &sc->sensors[0]);
+	else
+		it_generic_fanrpm(sc, &sc->sensors[0]);
 }
 
 static void
