@@ -618,7 +618,7 @@ cpu_reset()
 			wmb();
 
 			cnt = 0;
-			while (cpu_reset_proxy_active == 0 && cnt < 10000000) {
+			while (cpu_reset_proxy_active == 0 && cnt < 100000000) {
 				ia32_pause();
 				cnt++;	/* Wait for BSP to announce restart */
 			}
