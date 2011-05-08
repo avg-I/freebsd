@@ -609,13 +609,11 @@ cpu_reset()
 		}
 		if (PCPU_GET(cpuid) != 0) {
 			cpu_reset_proxyid = PCPU_GET(cpuid);
-			cpustop_restartfunc = cpu_reset_proxy;
 			cpu_reset_proxy_active = 0;
 			printf("cpu_reset: Restarting BSP\n");
 
 			/* Restart CPU #0. */
-			CPU_SETOF(0, &started_cpus);
-			wmb();
+			cpustop_hook = cpu_reset_proxy;
 
 			cnt = 0;
 			while (cpu_reset_proxy_active == 0 && cnt < 100000000) {

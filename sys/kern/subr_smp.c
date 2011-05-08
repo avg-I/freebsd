@@ -61,7 +61,7 @@ volatile cpuset_t hard_stopping_cpus;
 cpuset_t hlt_cpus_mask;
 cpuset_t logical_cpus_mask;
 
-void (*cpustop_restartfunc)(void);
+void (* volatile cpustop_hook)(void);
 #endif
 /* This is used in modules that need to work in both SMP and UP. */
 cpuset_t all_cpus;

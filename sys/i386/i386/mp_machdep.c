@@ -1534,16 +1534,16 @@ cpustop_handler(void)
 	CPU_SET_ATOMIC(cpu, &stopped_cpus);
 
 	/* Wait for restart */
-	while (!CPU_ISSET(cpu, &started_cpus))
-	    ia32_pause();
+	while (!CPU_ISSET(cpu, &started_cpus)) {
+		if (cpu == 0 && cpustop_hook != NULL) {
+			cpustop_hook();
+			cpustop_hook = NULL;
+		}
+		ia32_pause();
+	}
 
 	CPU_CLR_ATOMIC(cpu, &started_cpus);
 	CPU_CLR_ATOMIC(cpu, &stopped_cpus);
-
-	if (cpu == 0 && cpustop_restartfunc != NULL) {
-		cpustop_restartfunc();
-		cpustop_restartfunc = NULL;
-	}
 }
 
 /*
