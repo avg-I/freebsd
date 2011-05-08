@@ -1459,6 +1459,10 @@ cpustop_handler(void)
 
 	cpu = PCPU_GET(cpuid);
 
+	/* Just return if this is a belated NMI */
+	if (!CPU_ISSET(cpu, &stopping_cpus))
+		return;
+
 	savectx(&stoppcbs[cpu]);
 
 	/* Indicate that we are stopped */

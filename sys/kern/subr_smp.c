@@ -54,6 +54,7 @@ __FBSDID("$FreeBSD$");
 volatile cpuset_t stopped_cpus;
 volatile cpuset_t started_cpus;
 volatile cpuset_t suspended_cpus;
+volatile cpuset_t stopping_cpus;
 volatile cpuset_t hard_stopped_cpus;
 volatile cpuset_t hard_started_cpus;
 volatile cpuset_t hard_stopping_cpus;
@@ -207,7 +208,8 @@ generic_stop_cpus(cpuset_t map, u_int type)
 #ifdef KTR
 	char cpusetbuf[CPUSETBUFSIZ];
 #endif
-	static volatile u_int stopping_cpu = NOCPU;
+	static volatile u_int stopper_cpu = NOCPU;
+	int cpu;
 	int i;
 	volatile cpuset_t *cpus;
 
@@ -237,13 +239,28 @@ generic_stop_cpus(cpuset_t map, u_int type)
 		mtx_lock_spin(&smp_ipi_mtx);
 #endif
 
-	if (stopping_cpu != PCPU_GET(cpuid))
-		while (atomic_cmpset_int(&stopping_cpu, NOCPU,
-		    PCPU_GET(cpuid)) == 0)
-			while (stopping_cpu != NOCPU)
-				cpu_spinwait(); /* spin */
+	/* Ensure non-preemtable context, just in case. */
+	spinlock_enter();
+
+	cpu = PCPU_GET(cpuid);
+
+	if (cpu != stopper_cpu) {
+		while (atomic_cmpset_int(&stopper_cpu, NOCPU, cpu) == 0)
+			while (stopper_cpu != NOCPU) {
+				if (CPU_ISSET(cpu, &stopping_cpus))
+					cpustop_handler();
+				else
+					cpu_spinwait();
+			}
+	} else {
+		/*
+		 * Recursion here is not expected.
+		 */
+		panic("cpu stop recursion\n");
+	}
 
 	/* send the stop IPI to all CPUs in map */
+	stopping_cpus = map;
 	ipi_selected(map, type);
 
 #if defined(__amd64__) || defined(__i386__)
@@ -269,7 +286,8 @@ generic_stop_cpus(cpuset_t map, u_int type)
 		mtx_unlock_spin(&smp_ipi_mtx);
 #endif
 
-	stopping_cpu = NOCPU;
+	stopper_cpu = NOCPU;
+	spinlock_exit();
 	return (1);
 }
 

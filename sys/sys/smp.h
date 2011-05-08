@@ -76,6 +76,7 @@ extern int smp_cpus;
 extern volatile cpuset_t started_cpus;
 extern volatile cpuset_t stopped_cpus;
 extern volatile cpuset_t suspended_cpus;
+extern volatile cpuset_t stopping_cpus;
 extern volatile cpuset_t hard_started_cpus;
 extern volatile cpuset_t hard_stopped_cpus;
 extern volatile cpuset_t hard_stopping_cpus;
