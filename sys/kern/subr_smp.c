@@ -54,6 +54,9 @@ __FBSDID("$FreeBSD$");
 volatile cpuset_t stopped_cpus;
 volatile cpuset_t started_cpus;
 volatile cpuset_t suspended_cpus;
+volatile cpuset_t hard_stopped_cpus;
+volatile cpuset_t hard_started_cpus;
+volatile cpuset_t hard_stopping_cpus;
 cpuset_t hlt_cpus_mask;
 cpuset_t logical_cpus_mask;
 
@@ -210,9 +213,9 @@ generic_stop_cpus(cpuset_t map, u_int type)
 
 	KASSERT(
 #if defined(__amd64__) || defined(__i386__)
-	    type == IPI_STOP || type == IPI_STOP_HARD || type == IPI_SUSPEND,
+	    type == IPI_STOP || type == IPI_SUSPEND,
 #else
-	    type == IPI_STOP || type == IPI_STOP_HARD,
+	    type == IPI_STOP,
 #endif
 	    ("%s: invalid stop type", __func__));
 
@@ -275,13 +278,6 @@ stop_cpus(cpuset_t map)
 {
 
 	return (generic_stop_cpus(map, IPI_STOP));
-}
-
-int
-stop_cpus_hard(cpuset_t map)
-{
-
-	return (generic_stop_cpus(map, IPI_STOP_HARD));
 }
 
 #if defined(__amd64__) || defined(__i386__)
@@ -359,6 +355,82 @@ resume_cpus(cpuset_t map)
 	return (generic_restart_cpus(map, IPI_SUSPEND));
 }
 #endif
+
+void
+stop_cpus_hard(void)
+{
+	static volatile u_int hard_stopper_cpu = NOCPU;
+	cpuset_t mask;
+	u_int cpu;
+	int i;
+
+	if (!smp_started)
+		return;
+
+	/* Ensure non-preemtable context, just in case. */
+	spinlock_enter();
+
+	cpu = PCPU_GET(cpuid);
+
+	CTR1(KTR_SMP, "hard_stop_cpus() with %u type", IPI_STOP_HARD);
+
+	if (cpu != hard_stopper_cpu) {
+		while (atomic_cmpset_int(&hard_stopper_cpu, NOCPU, cpu) == 0)
+			while (hard_stopper_cpu != NOCPU) {
+				if (CPU_ISSET(cpu, &hard_stopping_cpus))
+					cpuhardstop_handler();
+				else
+					cpu_spinwait();
+			}
+	} else {
+		/*
+		 * Recursion here is not expected.
+		 */
+		atomic_store_rel_int(&hard_stopper_cpu, NOCPU);
+		panic("hard stop recursion\n");
+	}
+
+	CPU_COPY(&all_cpus, &mask);
+	CPU_CLR(cpu, &mask);
+	CPU_COPY(&mask, &hard_stopping_cpus);
+	ipi_all_but_self(IPI_STOP_HARD);
+
+	i = 0;
+	while (CPU_CMP(&hard_stopped_cpus, &mask) != 0) {
+		cpu_spinwait();
+		i++;
+		if (i == 10000000) {
+			/* Should not happen; other CPU stuck in NMI handler? */
+			printf("timeout stopping cpus\n");
+			break;
+		}
+	}
+
+	atomic_store_rel_int(&hard_stopper_cpu, NOCPU);
+
+	spinlock_exit();
+	return;
+}
+
+void
+unstop_cpus_hard(void)
+{
+	cpuset_t mask;
+
+	if (!smp_started)
+		return;
+
+	CTR0(KTR_SMP, "unstop_cpus_hard()");
+
+	/* signal other cpus to restart */
+	CPU_COPY(&all_cpus, &mask);
+	CPU_CLR(PCPU_GET(cpuid), &mask);
+	CPU_COPY_STORE_REL(&mask, &hard_started_cpus);
+
+	/* wait for each to clear its bit */
+	while (!CPU_EMPTY(&hard_stopped_cpus))
+		cpu_spinwait();
+}
 
 /*
  * All-CPU rendezvous.  CPUs are signalled, all execute the setup function 

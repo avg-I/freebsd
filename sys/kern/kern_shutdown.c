@@ -706,11 +706,8 @@ vpanic(const char *fmt, va_list ap)
 	 * concurrently entering panic.  Only the winner will proceed
 	 * further.
 	 */
-	if (panicstr == NULL && !kdb_active) {
-		other_cpus = all_cpus;
-		CPU_CLR(PCPU_GET(cpuid), &other_cpus);
-		stop_cpus_hard(other_cpus);
-	}
+	if (panicstr == NULL && !kdb_active)
+		stop_cpus_hard();
 
 	/*
 	 * We set stop_scheduler here and not in the block above,

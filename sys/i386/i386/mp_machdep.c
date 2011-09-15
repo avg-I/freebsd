@@ -1463,8 +1463,38 @@ ipi_all_but_self(u_int ipi)
 	cpu_ops.ipi_vectored(ipi, APIC_IPI_DEST_OTHERS);
 }
 
+void
+cpuhardstop_handler(void)
+{
+	u_int cpu;
+
+	cpu = PCPU_GET(cpuid);
+
+	/* Just return if this is a belated NMI */
+	if (!CPU_ISSET(cpu, &hard_stopping_cpus))
+		return;
+
+	savectx(&stoppcbs[cpu]);
+
+	/* Indicate that we are stopped */
+	CPU_SET_ATOMIC(cpu, &hard_stopped_cpus);
+	CPU_CLR_ATOMIC(cpu, &hard_stopping_cpus);
+
+	/* Wait for restart */
+	while (!CPU_ISSET(cpu, &hard_started_cpus))
+		ia32_pause();
+
+	CPU_CLR_ATOMIC(cpu, &hard_started_cpus);
+	CPU_CLR_ATOMIC(cpu, &hard_stopped_cpus);
+
+	if (cpu == 0 && cpustop_restartfunc != NULL) {
+		cpustop_restartfunc();
+		cpustop_restartfunc = NULL;
+	}
+}
+
 int
-ipi_nmi_handler()
+ipi_nmi_handler(void)
 {
 	u_int cpuid;
 
@@ -1479,7 +1509,7 @@ ipi_nmi_handler()
 		return (1);
 
 	CPU_CLR_ATOMIC(cpuid, &ipi_nmi_pending);
-	cpustop_handler();
+	cpuhardstop_handler();
 	return (0);
 }
 

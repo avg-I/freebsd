@@ -76,6 +76,9 @@ extern int smp_cpus;
 extern volatile cpuset_t started_cpus;
 extern volatile cpuset_t stopped_cpus;
 extern volatile cpuset_t suspended_cpus;
+extern volatile cpuset_t hard_started_cpus;
+extern volatile cpuset_t hard_stopped_cpus;
+extern volatile cpuset_t hard_stopping_cpus;
 extern cpuset_t hlt_cpus_mask;
 extern cpuset_t logical_cpus_mask;
 #endif /* SMP */
@@ -163,12 +166,13 @@ void	cpu_mp_start(void);
 void	forward_signal(struct thread *);
 int	restart_cpus(cpuset_t);
 int	stop_cpus(cpuset_t);
-int	stop_cpus_hard(cpuset_t);
 #if defined(__amd64__) || defined(__i386__)
 int	suspend_cpus(cpuset_t);
 int	resume_cpus(cpuset_t);
 #endif
-
+void	stop_cpus_hard(void);
+void	unstop_cpus_hard(void);
+void	cpuhardstop_handler(void);
 void	smp_rendezvous_action(void);
 extern	struct mtx smp_ipi_mtx;
 

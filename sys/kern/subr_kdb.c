@@ -610,9 +610,6 @@ kdb_thr_select(struct thread *thr)
 int
 kdb_trap(int type, int code, struct trapframe *tf)
 {
-#ifdef SMP
-	cpuset_t other_cpus;
-#endif
 	struct kdb_dbbe *be;
 	register_t intr;
 	int handled;
@@ -632,9 +629,7 @@ kdb_trap(int type, int code, struct trapframe *tf)
 
 #ifdef SMP
 	if (!SCHEDULER_STOPPED()) {
-		other_cpus = all_cpus;
-		CPU_CLR(PCPU_GET(cpuid), &other_cpus);
-		stop_cpus_hard(other_cpus);
+		stop_cpus_hard();
 		did_stop_cpus = 1;
 	} else
 		did_stop_cpus = 0;
@@ -668,7 +663,7 @@ kdb_trap(int type, int code, struct trapframe *tf)
 
 #ifdef SMP
 	if (did_stop_cpus)
-		restart_cpus(stopped_cpus);
+		unstop_cpus_hard();
 #endif
 
 	intr_restore(intr);

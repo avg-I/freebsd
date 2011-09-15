@@ -49,6 +49,7 @@ static CORE_ADDR dumppcb;
 static int dumptid;
 
 static cpuset_t stopped_cpus;
+static cpuset_t hard_stopped_cpus;
 
 static struct kthr *first;
 struct kthr *curkthr;
@@ -97,7 +98,8 @@ kgdb_thr_add_procs(uintptr_t paddr)
 			if (td.td_tid == dumptid)
 				kt->pcb = dumppcb;
 			else if (td.td_state == TDS_RUNNING &&
-			    CPU_ISSET(td.td_oncpu, &stopped_cpus))
+			    (CPU_ISSET(td.td_oncpu, &stopped_cpus) ||
+			    CPU_ISSET(td.td_oncpu, &hard_stopped_cpus)))
 				kt->pcb = kgdb_trgt_core_pcb(td.td_oncpu);
 			else
 				kt->pcb = (uintptr_t)td.td_pcb;
@@ -148,6 +150,12 @@ kgdb_thr_init(void)
 	if (cpusetsize != -1 && (u_long)cpusetsize <= sizeof(cpuset_t) &&
 	    addr != 0)
 		kvm_read(kvm, addr, &stopped_cpus, cpusetsize);
+	addr = kgdb_lookup("hard_stopped_cpus");
+	CPU_ZERO(&hard_stopped_cpus);
+	cpusetsize = sysconf(_SC_CPUSET_SIZE);
+	if (cpusetsize != -1 && (u_long)cpusetsize <= sizeof(cpuset_t) &&
+	    addr != 0)
+		kvm_read(kvm, addr, &hard_stopped_cpus, cpusetsize);
 
 	kgdb_thr_add_procs(paddr);
 	addr = kgdb_lookup("zombproc");
