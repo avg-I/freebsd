@@ -27,7 +27,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sensors.h>
 #include <machine/bus.h>
 
-#include <dev/lm/lm78var.h>
+#include "lm78var.h"
 #include "wbsioreg.h"
 
 #if defined(LMDEBUG)
