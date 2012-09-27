@@ -108,6 +108,8 @@ lm_isa_probe(struct device *dev)
 
 	/* Probe for Winbond chips. */
 	bus_space_write_1(iot, ioh, LMC_ADDR, WB_BANKSEL);
+	bus_space_write_1(iot, ioh, LMC_DATA, 0);
+	bus_space_write_1(iot, ioh, LMC_ADDR, WB_BANKSEL);
 	banksel = bus_space_read_1(iot, ioh, LMC_DATA);
 	bus_space_write_1(iot, ioh, LMC_ADDR, WB_VENDID);
 	vendid = bus_space_read_1(iot, ioh, LMC_DATA);
