@@ -215,6 +215,33 @@ struct lm_sensor nct6776f_sensors[] = {
 	{ NULL }
 };
 
+struct lm_sensor nct6779d_sensors[] = {
+	/* Voltage */
+	{ "VCore", SENSOR_VOLTS_DC, 0, 0x20, lm_refresh_volt, RFACT_NONE / 2},
+	{ "+12V", SENSOR_VOLTS_DC, 0, 0x21, lm_refresh_volt, RFACT(56, 10) / 2 },
+	{ "+3.3V", SENSOR_VOLTS_DC, 0, 0x22, lm_refresh_volt, RFACT(34, 34) / 2 },
+	{ "+3.3V", SENSOR_VOLTS_DC, 0, 0x23, lm_refresh_volt, RFACT(34, 34) / 2 },
+	{ "-12V", SENSOR_VOLTS_DC, 0, 0x24, wb_w83627ehf_refresh_nvolt },
+	{ "", SENSOR_VOLTS_DC, 0, 0x25, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "", SENSOR_VOLTS_DC, 0, 0x26, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "3.3VSB", SENSOR_VOLTS_DC, 5, 0x50, lm_refresh_volt, RFACT(34, 34) / 2 },
+	{ "VBAT", SENSOR_VOLTS_DC, 5, 0x51, lm_refresh_volt, RFACT_NONE / 2 },
+
+	/* Temperature */
+	{ "", SENSOR_TEMP, 0, 0x27, lm_refresh_temp },
+	{ "", SENSOR_TEMP, 1, 0x50, wb_refresh_temp },
+	{ "", SENSOR_TEMP, 2, 0x50, wb_refresh_temp },
+
+	/* Fans */
+	{ "", SENSOR_FANRPM, 6, 0x56, wb_nct6776f_refresh_fanrpm },
+	{ "", SENSOR_FANRPM, 6, 0x58, wb_nct6776f_refresh_fanrpm },
+	{ "", SENSOR_FANRPM, 6, 0x5a, wb_nct6776f_refresh_fanrpm },
+	{ "", SENSOR_FANRPM, 6, 0x5c, wb_nct6776f_refresh_fanrpm },
+	{ "", SENSOR_FANRPM, 6, 0x5e, wb_nct6776f_refresh_fanrpm },
+
+	{ NULL }
+};
+
 struct lm_sensor w83637hf_sensors[] = {
 	/* Voltage */
 	{ "VCore", SENSOR_VOLTS_DC, 0, 0x20, wb_w83637hf_refresh_vcore },
@@ -558,7 +585,10 @@ wb_match(struct lm_softc *sc)
 		lm_setup_sensors(sc, w83627ehf_sensors);
 		break;
 	case WB_CHIPID_W83627DHG:
-		if (sc->sioid == WBSIO_ID_NCT6776F) {
+		if (sc->sioid == WBSIO_ID_NCT6779D || 1) {
+			cdesc = "NCT6779D";
+			lm_setup_sensors(sc, nct6779d_sensors);
+		} else if (sc->sioid == WBSIO_ID_NCT6776F) {
 			cdesc = "NCT6776F";
 			lm_setup_sensors(sc, nct6776f_sensors);
 		} else {

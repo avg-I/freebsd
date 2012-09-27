@@ -43,6 +43,7 @@
 #define WBSIO_ID_W83637HF	0x70
 #define WBSIO_ID_W83697HF	0x60
 #define WBSIO_ID_NCT6776F	0xc3
+#define WBSIO_ID_NCT6779D	0xc5
 
 /* Logical Device Number (LDN) Assignments */
 #define WBSIO_LDN_HM		0x0b
