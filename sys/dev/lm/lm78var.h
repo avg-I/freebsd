@@ -124,8 +124,6 @@
 #define WB_VREF			3600
 #define WB_W83627EHF_VREF	2048
 
-#define WB_MAX_SENSORS  19
-
 struct lm_softc;
 
 struct lm_sensor {
@@ -140,8 +138,8 @@ struct lm_sensor {
 struct lm_softc {
 	struct device *sc_dev;
 
-	struct ksensor sensors[WB_MAX_SENSORS];
 	struct ksensordev sensordev;
+	struct ksensor *sensors;
 	const struct lm_sensor *lm_sensors;
 	u_int numsensors;
 	void (*refresh_sensor_data) (struct lm_softc *);

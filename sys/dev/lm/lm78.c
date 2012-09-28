@@ -24,6 +24,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
+#include <sys/malloc.h>
 #include <sys/sensors.h>
 #include <machine/bus.h>
 
@@ -489,6 +490,8 @@ lm_detach(struct lm_softc *sc)
 		sensor_detach(&sc->sensordev, &sc->sensors[i]);
 
 	sensor_task_unregister(sc);
+	if (sc->numsensors != 0)
+		free(sc->sensors, M_DEVBUF);
 
 	return 0;
 }
@@ -676,11 +679,17 @@ lm_setup_sensors(struct lm_softc *sc, const struct lm_sensor *sensors)
 {
 	int i;
 
-	for (i = 0; sensors[i].desc; i++) {
+	for (i = 0; sensors[i].desc; i++)
+		sc->numsensors++;
+	if (sc->numsensors == 0)
+		return;
+
+	sc->sensors = malloc(sizeof(sc->sensors[0]) * sc->numsensors,
+	    M_DEVBUF, M_WAITOK | M_ZERO);
+	for (i = 0; i < sc->numsensors; i++) {
 		sc->sensors[i].type = sensors[i].type;
 		strlcpy(sc->sensors[i].desc, sensors[i].desc,
 		    sizeof(sc->sensors[i].desc));
-		sc->numsensors++;
 	}
 	sc->lm_sensors = sensors;
 }
