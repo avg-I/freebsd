@@ -129,7 +129,7 @@
 struct lm_softc;
 
 struct lm_sensor {
-	char *desc;
+	const char *desc;
 	enum sensor_type type;
 	u_int8_t bank;
 	u_int8_t reg;
@@ -142,7 +142,7 @@ struct lm_softc {
 
 	struct ksensor sensors[WB_MAX_SENSORS];
 	struct ksensordev sensordev;
-	struct lm_sensor *lm_sensors;
+	const struct lm_sensor *lm_sensors;
 	u_int numsensors;
 	void (*refresh_sensor_data) (struct lm_softc *);
 
