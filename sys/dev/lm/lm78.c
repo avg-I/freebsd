@@ -219,6 +219,7 @@ static const struct lm_sensor nct6776f_sensors[] = {
 
 static const struct lm_sensor nct6779d_sensors[] = {
 	/* Voltage */
+#if 0
 	{ "VCore", SENSOR_VOLTS_DC, 0, 0x20, lm_refresh_volt, RFACT_NONE / 2},
 	{ "+12V", SENSOR_VOLTS_DC, 0, 0x21, lm_refresh_volt, RFACT(56, 10) / 2 },
 	{ "+3.3V", SENSOR_VOLTS_DC, 0, 0x22, lm_refresh_volt, RFACT(34, 34) / 2 },
@@ -228,18 +229,46 @@ static const struct lm_sensor nct6779d_sensors[] = {
 	{ "", SENSOR_VOLTS_DC, 0, 0x26, lm_refresh_volt, RFACT_NONE / 2 },
 	{ "3.3VSB", SENSOR_VOLTS_DC, 5, 0x50, lm_refresh_volt, RFACT(34, 34) / 2 },
 	{ "VBAT", SENSOR_VOLTS_DC, 5, 0x51, lm_refresh_volt, RFACT_NONE / 2 },
+#else
+	{ "VCore", SENSOR_VOLTS_DC, 4, 0x80, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN0]", SENSOR_VOLTS_DC, 4, 0x81, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "+3.3V [AVCC]", SENSOR_VOLTS_DC, 4, 0x82, lm_refresh_volt, RFACT_NONE },
+	{ "+3.3V [3VCC]", SENSOR_VOLTS_DC, 4, 0x83, lm_refresh_volt, RFACT_NONE },
+	{ "[VIN1]", SENSOR_VOLTS_DC, 4, 0x84, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN2]", SENSOR_VOLTS_DC, 4, 0x85, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN3]", SENSOR_VOLTS_DC, 4, 0x86, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "3.3VSB", SENSOR_VOLTS_DC, 4, 0x87, lm_refresh_volt, RFACT_NONE },
+	{ "VBAT", SENSOR_VOLTS_DC, 4, 0x88, lm_refresh_volt, RFACT_NONE },
+
+	{ "", SENSOR_VOLTS_DC, 4, 0x89, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "", SENSOR_VOLTS_DC, 4, 0x8a, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "", SENSOR_VOLTS_DC, 4, 0x8b, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "", SENSOR_VOLTS_DC, 4, 0x8c, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "", SENSOR_VOLTS_DC, 4, 0x8d, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "", SENSOR_VOLTS_DC, 4, 0x8e, lm_refresh_volt, RFACT_NONE / 2 },
+
+#endif
 
 	/* Temperature */
-	{ "", SENSOR_TEMP, 0, 0x27, lm_refresh_temp },
-	{ "", SENSOR_TEMP, 1, 0x50, wb_refresh_temp },
-	{ "", SENSOR_TEMP, 2, 0x50, wb_refresh_temp },
+	{ "System", SENSOR_TEMP, 0, 0x27, lm_refresh_temp },
+	{ "CPU", SENSOR_TEMP, 1, 0x50, wb_refresh_temp },
 
 	/* Fans */
-	{ "", SENSOR_FANRPM, 6, 0x56, wb_nct6776f_refresh_fanrpm },
-	{ "", SENSOR_FANRPM, 6, 0x58, wb_nct6776f_refresh_fanrpm },
-	{ "", SENSOR_FANRPM, 6, 0x5a, wb_nct6776f_refresh_fanrpm },
+	/* both sets seem to work fine */
+	/* except, maybe maybe, for divisor */
+#if 1
+	{ "System", SENSOR_FANRPM, 6, 0x56, wb_nct6776f_refresh_fanrpm },
+	{ "CPU", SENSOR_FANRPM, 6, 0x58, wb_nct6776f_refresh_fanrpm },
+	{ "Aux", SENSOR_FANRPM, 6, 0x5a, wb_nct6776f_refresh_fanrpm },
 	{ "", SENSOR_FANRPM, 6, 0x5c, wb_nct6776f_refresh_fanrpm },
 	{ "", SENSOR_FANRPM, 6, 0x5e, wb_nct6776f_refresh_fanrpm },
+#else
+	{ "", SENSOR_FANRPM, 4, 0xb0, wb_nct6779d_refresh_fanrpm },
+	{ "", SENSOR_FANRPM, 4, 0xb2, wb_nct6779d_refresh_fanrpm },
+	{ "", SENSOR_FANRPM, 4, 0xb4, wb_nct6779d_refresh_fanrpm },
+	{ "", SENSOR_FANRPM, 4, 0xb6, wb_nct6779d_refresh_fanrpm },
+	{ "", SENSOR_FANRPM, 4, 0xb8, wb_nct6779d_refresh_fanrpm },
+#endif
 
 	{ NULL }
 };
@@ -933,6 +962,29 @@ wb_nct6776f_refresh_fanrpm(struct lm_softc *sc, int n)
 	} else {
 		sensor->flags &= ~SENSOR_FINVALID;
 		sensor->value = (datah << 8) | datal;
+	}
+}
+
+void
+wb_nct6779d_refresh_fanrpm(struct lm_softc *sc, int n)
+{
+	struct ksensor *sensor = &sc->sensors[n];
+	u_int datah, datal;
+
+	datah = sc->lm_readreg(sc, sc->lm_sensors[n].reg);
+	datal = sc->lm_readreg(sc, sc->lm_sensors[n].reg + 1);
+
+	if (datah == 0xff) {
+		sensor->flags |= SENSOR_FINVALID;
+		sensor->value = 0;
+	} else {
+		sensor->flags &= ~SENSOR_FINVALID;
+		datah = (datah << 5) | (datal & 0x1f);
+		if (datah == 0) {
+			sensor->flags |= SENSOR_FINVALID;
+			sensor->value = 0;
+		}
+		sensor->value = 1350000 / datah;
 	}
 }
 
