@@ -661,10 +661,6 @@ TUNABLE_INT("machdep.idle_mwait", &idle_mwait);
 SYSCTL_INT(_machdep, OID_AUTO, idle_mwait, CTLFLAG_RW, &idle_mwait,
     0, "Use MONITOR/MWAIT for short idle");
 
-#define	STATE_RUNNING	0x0
-#define	STATE_MWAIT	0x1
-#define	STATE_SLEEPING	0x2
-
 static void
 cpu_idle_acpi(sbintime_t sbt)
 {

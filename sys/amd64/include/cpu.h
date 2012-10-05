@@ -45,11 +45,56 @@
 
 #ifdef _KERNEL
 
+/*
+ * CPU states for the purpose of communication using MONITOR+MWAIT.
+ */
+#define	STATE_RUNNING	0x0
+#define	STATE_MWAIT	0x1
+#define	STATE_SLEEPING	0x2
+
 #define	cpu_exec(p)	/* nothing */
 #define	cpu_swapin(p)	/* nothing */
 #define	cpu_getstack(td)		((td)->td_frame->tf_rsp)
 #define	cpu_setstack(td, ap)		((td)->td_frame->tf_rsp = (ap))
 #define	cpu_spinwait()			ia32_pause()
+
+static __inline void
+cpu_memwait_once_flags(volatile const void *addr, u_int ext, u_int hints,
+    int (*check)(volatile const void *, uintptr_t), uintptr_t arg)
+{
+	cpu_monitor(__DEQUALIFY(const void *, addr), 0, 0);
+	if (!check(addr, arg))
+		cpu_mwait(ext, hints);
+}
+
+static __inline void
+cpu_memwait_once(volatile const void *addr,
+    int (*check)(volatile const void *, uintptr_t), uintptr_t arg)
+{
+	cpu_memwait_once_flags(addr, 0, 0, check, arg);
+}
+
+
+static __inline void
+cpu_memwait(volatile const void *addr,
+    int (*check)(volatile const void *, uintptr_t), uintptr_t arg)
+{
+	while (!check(addr, arg))
+		cpu_memwait_once(addr, check, arg);
+}
+
+#if 0
+#define	cpu_wait_flags(var, oldval, ext, hints)			\
+	do {							\
+		const volatile __typeof__(var) *varp;		\
+		if (sizeof(var) <= cpu_mon_min_size) {		\
+			cpu_monitor(__DEVOLATILE(&var), 0, 0);	\
+			if (*varp == oldval)			\
+				cpu_mwait(ext, hints);		\
+		} else						\
+			cpu_spinwait();				\
+	} while (0)
+#endif
 
 #define	TRAPF_USERMODE(framep) \
 	(ISPL((framep)->tf_cs) == SEL_UPL)
