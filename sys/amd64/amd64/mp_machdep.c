@@ -60,6 +60,7 @@ __FBSDID("$FreeBSD$");
 
 #include <x86/apicreg.h>
 #include <machine/clock.h>
+#include <machine/cpu.h>
 #include <machine/cputypes.h>
 #include <machine/cpufunc.h>
 #include <x86/mca.h>
@@ -1398,6 +1399,12 @@ ipi_all_but_self(u_int ipi)
 	cpu_ops.ipi_vectored(ipi, APIC_IPI_DEST_OTHERS);
 }
 
+static __inline int
+check_cpu_isset(volatile const void *cpus, uintptr_t cpu)
+{
+	return (CPU_ISSET(cpu, (volatile const cpuset_t *)cpus));
+}
+
 void
 cpuhardstop_handler(void)
 {
@@ -1421,7 +1428,10 @@ cpuhardstop_handler(void)
 			cpustop_hook();
 			cpustop_hook = NULL;
 		}
-		ia32_pause();
+		if (__predict_true(sizeof(cpuset_t) <= cpu_mon_min_size))
+			cpu_memwait_once(&hard_started_cpus, check_cpu_isset, cpu);
+		else
+			ia32_pause();
 	}
 
 	CPU_CLR_ATOMIC(cpu, &hard_started_cpus);
@@ -1474,7 +1484,10 @@ cpustop_handler(void)
 			cpustop_hook();
 			cpustop_hook = NULL;
 		}
-		ia32_pause();
+		if (__predict_true(sizeof(cpuset_t) <= cpu_mon_min_size))
+			cpu_memwait_once(&started_cpus, check_cpu_isset, cpu);
+		else
+			ia32_pause();
 	}
 
 	CPU_CLR_ATOMIC(cpu, &started_cpus);
@@ -1512,8 +1525,12 @@ cpususpend_handler(void)
 	}
 
 	/* Wait for resume */
-	while (!CPU_ISSET(cpu, &started_cpus))
-		ia32_pause();
+	while (!CPU_ISSET(cpu, &started_cpus)) {
+		if (__predict_true(sizeof(cpuset_t) <= cpu_mon_min_size))
+			cpu_memwait_once(&started_cpus, check_cpu_isset, cpu);
+		else
+			ia32_pause();
+	}
 
 	if (cpu_ops.cpu_resume)
 		cpu_ops.cpu_resume();
