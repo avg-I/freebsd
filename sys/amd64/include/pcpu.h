@@ -39,9 +39,13 @@
  * The reason for doing it via a struct is so that an array of pointers
  * to each CPU's data can be set up for things like "check curproc on all
  * other processors"
+ *
+ * XXX pc_monitorbuf should actually observe max. monitor region size,
+ * which we could only learn at run-time.  128 bytes seem to be safe on all
+ * modern x86 machines (typical monitor line is 64 bytes).
  */
 #define	PCPU_MD_FIELDS							\
-	char	pc_monitorbuf[128] __aligned(128); /* cache line */	\
+	char	pc_monitorbuf[128] __aligned(128); /* monitor line */	\
 	struct	pcpu *pc_prvspace;	/* Self-reference */		\
 	struct	pmap *pc_curpmap;					\
 	struct	amd64tss *pc_tssp;	/* TSS segment active on CPU */	\
