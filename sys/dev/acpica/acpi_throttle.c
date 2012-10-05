@@ -59,7 +59,7 @@ struct acpi_throttle_softc {
 	ACPI_HANDLE	 cpu_handle;
 	uint32_t	 cpu_p_blk;	/* ACPI P_BLK location */
 	uint32_t	 cpu_p_blk_len;	/* P_BLK length (must be 6). */
-	struct resource	*cpu_p_cnt;	/* Throttling control register */
+	void		*cpu_p_cnt;	/* Throttling control register */
 	int		 cpu_p_type;	/* Resource type for cpu_p_cnt. */
 	uint32_t	 cpu_thr_state;	/* Current throttle setting. */
 };
@@ -278,11 +278,14 @@ acpi_throttle_evaluate(struct acpi_throttle_softc *sc)
 			return (ENXIO);
 		}
 		memcpy(&gas, obj.Buffer.Pointer + 3, sizeof(gas));
-		acpi_bus_alloc_gas(sc->cpu_dev, &sc->cpu_p_type, &thr_rid,
-		    &gas, &sc->cpu_p_cnt, 0);
-		if (sc->cpu_p_cnt != NULL && bootverbose) {
-			device_printf(sc->cpu_dev, "P_CNT from _PTC %#jx\n",
-			    gas.Address);
+
+		/* XXX We don't support FFixedHW yet. */
+		if (gas.SpaceId != ACPI_ADR_SPACE_FIXED_HARDWARE) {
+			acpi_bus_alloc_gas(sc->cpu_dev, &sc->cpu_p_type,
+			    &thr_rid, &gas, &sc->cpu_p_cnt, 0);
+			if (sc->cpu_p_cnt != NULL && bootverbose)
+				device_printf(sc->cpu_dev,
+				    "P_CNT from _PTC %#jx\n", gas.Address);
 		}
 	}
 

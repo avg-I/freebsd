@@ -47,6 +47,9 @@ __FBSDID("$FreeBSD$");
 #include <machine/bus.h>
 #if defined(__amd64__) || defined(__i386__)
 #include <machine/clock.h>
+#include <machine/cpu.h>
+#include <machine/md_var.h>
+#include <machine/specialreg.h>
 #endif
 #include <sys/rman.h>
 
@@ -64,7 +67,7 @@ __FBSDID("$FreeBSD$");
 ACPI_MODULE_NAME("PROCESSOR")
 
 struct acpi_cx {
-    struct resource	*p_lvlx;	/* Register to read to enter state. */
+    void		*p_lvlx;	/* Register to read to enter state. */
     uint32_t		 type;		/* C1-3 (C4 and up treated as C3). */
     uint32_t		 trans_lat;	/* Transition latency (usec). */
     uint32_t		 power;		/* Power consumed (mW). */
@@ -84,6 +87,7 @@ struct acpi_cpu_softc {
     int			 cpu_cx_count;	/* Number of valid Cx states. */
     int			 cpu_prev_sleep;/* Last idle sleep duration. */
     int			 cpu_features;	/* Child driver supported features. */
+    int			 cpu_cx_native;	/* Use MONITOR/MWAIT for Cx. */
     /* Runtime state. */
     int			 cpu_non_c3;	/* Index of lowest non-C3 state. */
     u_int		 cpu_cx_stats[MAX_CX_STATES];/* Cx usage history. */
@@ -133,6 +137,18 @@ TUNABLE_INT("debug.acpi.cpu_unordered", &cpu_unordered);
 SYSCTL_INT(_debug_acpi, OID_AUTO, cpu_unordered, CTLFLAG_RDTUN,
     &cpu_unordered, 0,
     "Do not use the MADT to match ACPI Processor objects to CPUs.");
+
+/* Vendor-specific functional fixed hardware */
+					/* Vendor */
+#define	FFH_VENDOR_GENERIC	0x00	/* Undefined */
+#define	FFH_VENDOR_INTEL	0x01	/* Intel */
+					/* Class */
+#define	FFH_CLASS_C1_HALT	0x00	/* C1 (STI and HLT) */
+#define	FFH_CLASS_C1_IO_HALT	0x01	/* C1 (I/0 then HLT) */
+#define	FFH_CLASS_NATIVE	0x02	/* Native (MWAIT) */
+					/* Arg1 */
+#define	FFH_NATIVE_HW_COORD	0x01	/* Hardware coordination */
+#define	FFH_NATIVE_CHECK_BM	0x02	/* Bus master avoidance */
 
 /* Platform hardware resource information. */
 static uint32_t		 cpu_smi_cmd;	/* Value to write to SMI_CMD. */
@@ -344,6 +360,19 @@ acpi_cpu_attach(device_t dev)
      * SMP control where each CPU can have different settings.
      */
     sc->cpu_features = ACPI_CAP_SMP_SAME | ACPI_CAP_SMP_SAME_C3;
+#if defined(__amd64__) || defined(__i386__)
+    sc->cpu_features |= ACPI_CAP_C1_IO_HALT;
+
+    /*
+     * We must support extension to break MWAIT by interrupt.
+     */
+    if ((cpu_feature2 & CPUID2_MON) != 0 && cpu_high >= 5) {
+	if ((cpu_mon_mwait_flags & (CPUID5_MON_MWAIT_EXT | CPUID5_MWAIT_INTRBREAK)) ==
+	    (CPUID5_MON_MWAIT_EXT | CPUID5_MWAIT_INTRBREAK))
+	    sc->cpu_features |= ACPI_CAP_SMP_C1_NATIVE | ACPI_CAP_SMP_C3_NATIVE;
+	    sc->cpu_cx_native = TRUE;
+    }
+#endif
     if (devclass_get_drivers(acpi_cpu_devclass, &drivers, &drv_count) == 0) {
 	for (i = 0; i < drv_count; i++) {
 	    if (ACPI_GET_FEATURES(drivers[i], &features) == 0)
@@ -643,6 +672,10 @@ acpi_cpu_cx_probe(struct acpi_cpu_softc *sc)
 	    device_printf(sc->cpu_dev, "switching to generic Cx mode\n");
     }
 
+    /* Probe C3 capability early. */
+    if (AcpiGbl_FADT.C3Latency <= 1000)
+	cpu_can_deep_sleep = 1;
+
     /*
      * TODO: _CSD Package should be checked here.
      */
@@ -705,7 +738,6 @@ acpi_cpu_generic_cx_probe(struct acpi_cpu_softc *sc)
 	if (cx_ptr->p_lvlx != NULL) {
 	    cx_ptr->type = ACPI_STATE_C3;
 	    cx_ptr->trans_lat = AcpiGbl_FADT.C3Latency;
-	    cx_ptr++;
 	    sc->cpu_cx_count++;
 	    cpu_can_deep_sleep = 1;
 	}
@@ -720,13 +752,15 @@ acpi_cpu_generic_cx_probe(struct acpi_cpu_softc *sc)
 static int
 acpi_cpu_cx_cst(struct acpi_cpu_softc *sc)
 {
+    ACPI_GENERIC_ADDRESS gas;
     struct	 acpi_cx *cx_ptr;
+    struct	 acpi_ffh *cx_ffh;
     ACPI_STATUS	 status;
     ACPI_BUFFER	 buf;
     ACPI_OBJECT	*top;
     ACPI_OBJECT	*pkg;
     uint32_t	 count;
-    int		 i;
+    int		 error, i;
 
     ACPI_FUNCTION_TRACE((char *)(uintptr_t)__func__);
 
@@ -769,12 +803,51 @@ acpi_cpu_cx_cst(struct acpi_cpu_softc *sc)
     for (i = 0; i < count; i++) {
 	pkg = &top->Package.Elements[i + 1];
 	if (!ACPI_PKG_VALID(pkg, 4) ||
+	    acpi_PkgGas(pkg, 0, &gas) != 0 ||
 	    acpi_PkgInt32(pkg, 1, &cx_ptr->type) != 0 ||
 	    acpi_PkgInt32(pkg, 2, &cx_ptr->trans_lat) != 0 ||
 	    acpi_PkgInt32(pkg, 3, &cx_ptr->power) != 0) {
 
 	    device_printf(sc->cpu_dev, "skipping invalid Cx state package\n");
 	    continue;
+	}
+	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "acpi_cpu%d: Got C%d - %d latency\n",
+	    device_get_unit(sc->cpu_dev), cx_ptr->type, cx_ptr->trans_lat));
+
+	/* Free up any previous register. */
+	if (cx_ptr->p_lvlx != NULL)
+	    acpi_bus_release_gas(sc->cpu_dev, cx_ptr->res_type, cx_ptr->res_rid,
+		cx_ptr->p_lvlx);
+
+	/* Allocate the control register. */
+	cx_ptr->p_lvlx = NULL;
+	cx_ptr->res_rid = i;
+	error = acpi_bus_alloc_gas(sc->cpu_dev, &cx_ptr->res_type,
+	    &cx_ptr->res_rid, &gas, &cx_ptr->p_lvlx, RF_SHAREABLE);
+	if (error != 0) {
+	    device_printf(sc->cpu_dev, "failed to allocate resources\n");
+	    continue;
+	}
+
+	/* Decode functional fixed hardware for Intel processors. */
+	if (cx_ptr->res_type == ACPI_RES_FFH) {
+#if defined(__amd64__) || defined(__i386__)
+	    cx_ffh = cx_ptr->p_lvlx;
+	    if (!(cx_ffh->vendor == FFH_VENDOR_GENERIC ||
+		(cx_ffh->vendor == FFH_VENDOR_INTEL &&
+		(cx_ffh->class == FFH_CLASS_C1_IO_HALT ||
+		cx_ffh->class == FFH_CLASS_NATIVE)))) {
+		acpi_bus_release_gas(sc->cpu_dev, cx_ptr->res_type,
+		    cx_ptr->res_rid, cx_ptr->p_lvlx);
+		cx_ptr->p_lvlx = NULL;
+		device_printf(sc->cpu_dev, "skipping invalid FFixedHW\n");
+		continue;
+	    }
+#else
+	    cx_ptr->p_lvlx = NULL;
+	    device_printf(sc->cpu_dev, "unexpected/unsupported FFixedHW\n");
+	    continue;
+#endif
 	}
 
 	/* Validate the state to see if we should use it. */
@@ -783,6 +856,8 @@ acpi_cpu_cx_cst(struct acpi_cpu_softc *sc)
 	    if (sc->cpu_cx_states[0].type == ACPI_STATE_C0) {
 		/* This is the first C1 state.  Use the reserved slot. */
 		sc->cpu_cx_states[0] = *cx_ptr;
+		/* Ensure that C1 p_lvlx is not deallocated in the next loop. */
+		cx_ptr->p_lvlx = NULL;
 	    } else {
 		sc->cpu_non_c3 = sc->cpu_cx_count;
 		cx_ptr++;
@@ -798,28 +873,17 @@ acpi_cpu_cx_cst(struct acpi_cpu_softc *sc)
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
 				 "acpi_cpu%d: C3[%d] not available.\n",
 				 device_get_unit(sc->cpu_dev), i));
+		if (cx_ptr->p_lvlx != NULL) {
+		    acpi_bus_release_gas(sc->cpu_dev, cx_ptr->res_type,
+			cx_ptr->res_rid, cx_ptr->p_lvlx);
+		    cx_ptr->p_lvlx = NULL;
+		}
 		continue;
 	    } else
 		cpu_can_deep_sleep = 1;
 	    break;
 	}
-
-	/* Free up any previous register. */
-	if (cx_ptr->p_lvlx != NULL) {
-	    bus_release_resource(sc->cpu_dev, cx_ptr->res_type, cx_ptr->res_rid,
-	        cx_ptr->p_lvlx);
-	    cx_ptr->p_lvlx = NULL;
-	}
-
-	/* Allocate the control register for C2 or C3. */
-	cx_ptr->res_rid = sc->cpu_cx_count;
-	acpi_PkgGas(sc->cpu_dev, pkg, 0, &cx_ptr->res_type, &cx_ptr->res_rid,
-	    &cx_ptr->p_lvlx, RF_SHAREABLE);
-	if (cx_ptr->p_lvlx) {
-	    ACPI_DEBUG_PRINT((ACPI_DB_INFO,
-			     "acpi_cpu%d: Got C%d - %d latency\n",
-			     device_get_unit(sc->cpu_dev), cx_ptr->type,
-			     cx_ptr->trans_lat));
+	if (error == 0) {
 	    cx_ptr++;
 	    sc->cpu_cx_count++;
 	}
@@ -947,6 +1011,60 @@ acpi_cpu_startup_cx(struct acpi_cpu_softc *sc)
     }
 }
 
+static void
+acpi_cpu_idle_cx(struct acpi_cx *cx_ptr, int native)
+{
+    struct acpi_ffh *cx_ffh;
+    UINT32 dummy;
+
+    if (cx_ptr->res_type == ACPI_RES_FFH) {
+#if defined(__amd64__) || defined(__i386__)
+	cx_ffh = cx_ptr->p_lvlx;
+	switch (cx_ffh->vendor) {
+	case FFH_VENDOR_GENERIC:
+	    acpi_cpu_c1();
+	    return;
+	case FFH_VENDOR_INTEL:
+	    switch (cx_ffh->class) {
+	    case FFH_CLASS_C1_IO_HALT:
+		AcpiOsReadPort(cx_ffh->arg0, &dummy, 8);
+		acpi_cpu_c1();
+		return;
+	    case FFH_CLASS_NATIVE:
+		if (native) {
+		    acpi_cpu_mwait_cx(cx_ffh->arg0);
+		    return;
+		}
+		break;
+	    }
+	    break;
+	}
+#endif
+	/* fallback for unexpected configurations */
+	acpi_cpu_c1();
+	return;
+    }
+
+    if (cx_ptr->type == ACPI_STATE_C1)
+	acpi_cpu_c1();
+    else
+	CPU_GET_REG(cx_ptr->p_lvlx, 1);
+}
+
+static __inline int
+acpi_cpu_check_bm(struct acpi_cpu_softc *sc, int cx_next_idx)
+{
+    const struct acpi_cx *cx_ptr;
+    const struct acpi_ffh *cx_ffh;
+
+    cx_ptr = &sc->cpu_cx_states[cx_next_idx];
+    if (cx_ptr->res_type == ACPI_RES_FFH) {
+	cx_ffh = cx_ptr->p_lvlx;
+	return ((cx_ffh->arg1 & FFH_NATIVE_CHECK_BM) != 0);
+    }
+    return (cx_next_idx > sc->cpu_non_c3);
+}
+
 /*
  * Idle the CPU in the lowest state possible.  This function is called with
  * interrupts disabled.  Note that once it re-enables interrupts, a task
@@ -1002,7 +1120,7 @@ acpi_cpu_idle(sbintime_t sbt)
      * time if USB is loaded.
      */
     if ((cpu_quirks & CPU_QUIRK_NO_BM_CTRL) == 0 &&
-	cx_next_idx > sc->cpu_non_c3) {
+	acpi_cpu_check_bm(sc, cx_next_idx)) {
 	AcpiReadBitRegister(ACPI_BITREG_BUS_MASTER_STATUS, &bm_active);
 	if (bm_active != 0) {
 	    AcpiWriteBitRegister(ACPI_BITREG_BUS_MASTER_STATUS, 1);
@@ -1023,7 +1141,7 @@ acpi_cpu_idle(sbintime_t sbt)
      */
     if (cx_next->type == ACPI_STATE_C1) {
 	cputicks = cpu_ticks();
-	acpi_cpu_c1();
+	acpi_cpu_idle_cx(cx_next, sc->cpu_cx_native);
 	end_time = ((cpu_ticks() - cputicks) << 20) / cpu_tickrate();
 	if (curthread->td_critnest == 0)
 		end_time = min(end_time, 500000 / hz);
@@ -1056,7 +1174,7 @@ acpi_cpu_idle(sbintime_t sbt)
 	start_time = 0;
 	cputicks = cpu_ticks();
     }
-    CPU_GET_REG(cx_next->p_lvlx, 1);
+    acpi_cpu_idle_cx(cx_next, sc->cpu_cx_native);
 
     /*
      * Read the end time twice.  Since it may take an arbitrary time

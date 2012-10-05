@@ -80,6 +80,15 @@ struct acpi_softc {
     struct callout	susp_force_to;		/* Force suspend if no acks. */
 };
 
+/* Vendor-specific functional fixed hardware */
+struct acpi_ffh {
+	uint8_t		vendor;		/* Vendor code (Intel = 0x01) */
+	uint8_t		class;		/* Class code */
+	uint64_t	arg0;		/* Arg0 */
+	uint8_t		arg1;		/* Arg1 */
+};
+#define	ACPI_RES_FFH	0x7f	/* Resource type for FFixedHW (ACPI only) */
+
 struct acpi_device {
     /* ACPI ivars */
     ACPI_HANDLE			ad_handle;
@@ -343,8 +352,9 @@ ACPI_STATUS	acpi_Startup(void);
 void		acpi_UserNotify(const char *subsystem, ACPI_HANDLE h,
 		    uint8_t notify);
 int		acpi_bus_alloc_gas(device_t dev, int *type, int *rid,
-		    ACPI_GENERIC_ADDRESS *gas, struct resource **res,
-		    u_int flags);
+		    ACPI_GENERIC_ADDRESS *gas, void **res, u_int flags);
+void		acpi_bus_release_gas(device_t dev, int type, int rid,
+		    void *res);
 void		acpi_walk_subtables(void *first, void *end,
 		    acpi_subtable_handler *handler, void *arg);
 BOOLEAN		acpi_MatchHid(ACPI_HANDLE h, const char *hid);
@@ -462,8 +472,8 @@ int		acpi_acad_get_acline(int *);
 int		acpi_PkgInt(ACPI_OBJECT *res, int idx, UINT64 *dst);
 int		acpi_PkgInt32(ACPI_OBJECT *res, int idx, uint32_t *dst);
 int		acpi_PkgStr(ACPI_OBJECT *res, int idx, void *dst, size_t size);
-int		acpi_PkgGas(device_t dev, ACPI_OBJECT *res, int idx, int *type,
-		    int *rid, struct resource **dst, u_int flags);
+int		acpi_PkgGas(ACPI_OBJECT *res, int idx,
+		    ACPI_GENERIC_ADDRESS *dst);
 ACPI_HANDLE	acpi_GetReference(ACPI_HANDLE scope, ACPI_OBJECT *obj);
 
 /*

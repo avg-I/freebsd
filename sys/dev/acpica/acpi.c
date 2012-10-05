@@ -1427,8 +1427,9 @@ acpi_delete_resource(device_t bus, device_t child, int type, int rid)
 /* Allocate an IO port or memory resource, given its GAS. */
 int
 acpi_bus_alloc_gas(device_t dev, int *type, int *rid, ACPI_GENERIC_ADDRESS *gas,
-    struct resource **res, u_int flags)
+    void **res, u_int flags)
 {
+    struct acpi_ffh *ffh;
     int error, res_type;
 
     error = ENOMEM;
@@ -1443,8 +1444,24 @@ acpi_bus_alloc_gas(device_t dev, int *type, int *rid, ACPI_GENERIC_ADDRESS *gas,
     case ACPI_ADR_SPACE_SYSTEM_IO:
 	res_type = SYS_RES_IOPORT;
 	break;
+    case ACPI_ADR_SPACE_FIXED_HARDWARE:
+	res_type = ACPI_RES_FFH;
+	break;
     default:
 	return (EOPNOTSUPP);
+    }
+
+    if (res_type == ACPI_RES_FFH) {
+	ffh = malloc(sizeof(*ffh), M_ACPIDEV, M_NOWAIT);
+	if (ffh == NULL)
+	    return (ENOMEM);
+	ffh->vendor = gas->BitWidth;
+	ffh->class = gas->BitOffset;
+	ffh->arg0 = gas->Address;
+	ffh->arg1 = gas->AccessWidth;
+	*type = res_type;
+	*res = ffh;
+	return (0);
     }
 
     /*
@@ -1468,6 +1485,20 @@ acpi_bus_alloc_gas(device_t dev, int *type, int *rid, ACPI_GENERIC_ADDRESS *gas,
 	bus_delete_resource(dev, res_type, *rid);
 
     return (error);
+}
+
+void
+acpi_bus_release_gas(device_t dev, int type, int rid, void *res)
+{
+
+    switch (type) {
+    case ACPI_RES_FFH:
+	free(res, M_ACPIDEV);
+	break;
+    default:
+	bus_release_resource(dev, type, rid, res);
+	bus_delete_resource(dev, type, rid);
+    }
 }
 
 /* Probe _HID and _CID for compatible ISA PNP ids. */

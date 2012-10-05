@@ -73,15 +73,16 @@ struct acpi_px {
 struct acpi_perf_softc {
 	device_t	 dev;
 	ACPI_HANDLE	 handle;
-	struct resource	*perf_ctrl;	/* Set new performance state. */
+	void		*perf_ctrl;	/* Set new performance state. */
 	int		 perf_ctrl_type; /* Resource type for perf_ctrl. */
-	struct resource	*perf_status;	/* Check that transition succeeded. */
+	int		 perf_ctrl_rid;	/* Resource ID for perf_ctrl. */
+	void		*perf_status;	/* Check that transition succeeded. */
 	int		 perf_sts_type;	/* Resource type for perf_status. */
+	int		 perf_sts_rid;	/* Resource ID for perf_status. */
 	struct acpi_px	*px_states;	/* ACPI perf states. */
 	uint32_t	 px_count;	/* Total number of perf states. */
 	uint32_t	 px_max_avail;	/* Lowest index state available. */
 	int		 px_curr_state;	/* Active state index. */
-	int		 px_rid;
 	int		 info_only;	/* Can we set new states? */
 };
 
@@ -170,11 +171,10 @@ acpi_perf_identify(driver_t *driver, device_t parent)
 static int
 acpi_perf_probe(device_t dev)
 {
+	ACPI_GENERIC_ADDRESS ctrl, stat;
 	ACPI_HANDLE handle;
 	ACPI_OBJECT *pkg;
-	struct resource *res;
 	ACPI_BUFFER buf;
-	int error, rid, type;
 
 	if (resource_disabled("acpi_perf", 0))
 		return (ENXIO);
@@ -184,31 +184,23 @@ acpi_perf_probe(device_t dev)
 	 * "functional fixed hardware", we attach quietly since we will
 	 * only be providing information on settings to other drivers.
 	 */
-	error = ENXIO;
 	handle = acpi_get_handle(dev);
 	buf.Pointer = NULL;
 	buf.Length = ACPI_ALLOCATE_BUFFER;
 	if (ACPI_FAILURE(AcpiEvaluateObject(handle, "_PCT", NULL, &buf)))
-		return (error);
+		return (ENXIO);
 	pkg = (ACPI_OBJECT *)buf.Pointer;
-	if (ACPI_PKG_VALID(pkg, 2)) {
-		rid = 0;
-		error = acpi_PkgGas(dev, pkg, 0, &type, &rid, &res, 0);
-		switch (error) {
-		case 0:
-			bus_release_resource(dev, type, rid, res);
-			bus_delete_resource(dev, type, rid);
-			device_set_desc(dev, "ACPI CPU Frequency Control");
-			break;
-		case EOPNOTSUPP:
+	if (ACPI_PKG_VALID(pkg, 2) && acpi_PkgGas(pkg, 0, &ctrl) == 0 &&
+	    acpi_PkgGas(pkg, 1, &stat) == 0) {
+		if (ctrl.SpaceId == ACPI_ADR_SPACE_FIXED_HARDWARE ||
+		    stat.SpaceId == ACPI_ADR_SPACE_FIXED_HARDWARE) {
+			/* FFixedHW is info only. */
 			device_quiet(dev);
-			error = 0;
-			break;
-		}
+		} else
+			device_set_desc(dev, "ACPI CPU Frequency Control");
 	}
 	AcpiOsFree(buf.Pointer);
-
-	return (error);
+	return (0);
 }
 
 static int
@@ -241,6 +233,7 @@ acpi_perf_detach(device_t dev)
 static int
 acpi_perf_evaluate(device_t dev)
 {
+	ACPI_GENERIC_ADDRESS ctrl, stat;
 	struct acpi_perf_softc *sc;
 	ACPI_BUFFER buf;
 	ACPI_OBJECT *pkg, *res;
@@ -325,38 +318,35 @@ acpi_perf_evaluate(device_t dev)
 
 	/* Check the package of two registers, each a Buffer in GAS format. */
 	pkg = (ACPI_OBJECT *)buf.Pointer;
-	if (!ACPI_PKG_VALID(pkg, 2)) {
+	if (!ACPI_PKG_VALID(pkg, 2) || acpi_PkgGas(pkg, 0, &ctrl) != 0 ||
+	    acpi_PkgGas(pkg, 1, &stat) != 0) {
 		device_printf(dev, "invalid perf register package\n");
 		goto out;
 	}
 
-	error = acpi_PkgGas(sc->dev, pkg, 0, &sc->perf_ctrl_type, &sc->px_rid,
-	    &sc->perf_ctrl, 0);
-	if (error) {
-		/*
-		 * If the register is of type FFixedHW, we can only return
-		 * info, we can't get or set new settings.
-		 */
-		if (error == EOPNOTSUPP) {
-			sc->info_only = TRUE;
-			error = 0;
-		} else
-			device_printf(dev, "failed in PERF_CTL attach\n");
+	/*
+	 * If the register is of type FFixedHW, we can only return info,
+	 * we can't get or set new settings.
+	 */
+	if (ctrl.SpaceId == ACPI_ADR_SPACE_FIXED_HARDWARE ||
+	    stat.SpaceId == ACPI_ADR_SPACE_FIXED_HARDWARE) {
+		sc->info_only = TRUE;
+		error = 0;
 		goto out;
 	}
-	sc->px_rid++;
-
-	error = acpi_PkgGas(sc->dev, pkg, 1, &sc->perf_sts_type, &sc->px_rid,
-	    &sc->perf_status, 0);
-	if (error) {
-		if (error == EOPNOTSUPP) {
-			sc->info_only = TRUE;
-			error = 0;
-		} else
-			device_printf(dev, "failed in PERF_STATUS attach\n");
+	sc->perf_ctrl_rid = 0;
+	error = acpi_bus_alloc_gas(sc->dev, &sc->perf_ctrl_type,
+	    &sc->perf_ctrl_rid, &ctrl, &sc->perf_ctrl, 0);
+	if (error != 0) {
+		device_printf(dev, "failed in PERF_CTL attach\n");
 		goto out;
 	}
-	sc->px_rid++;
+	error = acpi_bus_alloc_gas(sc->dev, &sc->perf_sts_type,
+	    &sc->perf_sts_rid, &stat, &sc->perf_status, 0);
+	if (error != 0) {
+		device_printf(dev, "failed in PERF_STATUS attach\n");
+		goto out;
+	}
 
 	/* Get our current limit and register for notifies. */
 	acpi_px_available(sc);
@@ -371,18 +361,15 @@ out:
 			sc->px_states = NULL;
 		}
 		if (sc->perf_ctrl) {
-			bus_release_resource(sc->dev, sc->perf_ctrl_type, 0,
-			    sc->perf_ctrl);
-			bus_delete_resource(sc->dev, sc->perf_ctrl_type, 0);
+			acpi_bus_release_gas(sc->dev, sc->perf_ctrl_type,
+			    sc->perf_ctrl_rid, sc->perf_ctrl);
 			sc->perf_ctrl = NULL;
 		}
 		if (sc->perf_status) {
-			bus_release_resource(sc->dev, sc->perf_sts_type, 1,
-			    sc->perf_status);
-			bus_delete_resource(sc->dev, sc->perf_sts_type, 1);
+			acpi_bus_release_gas(sc->dev, sc->perf_sts_type,
+			    sc->perf_sts_rid, sc->perf_status);
 			sc->perf_status = NULL;
 		}
-		sc->px_rid = 0;
 		sc->px_count = 0;
 	}
 	if (buf.Pointer)
