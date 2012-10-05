@@ -42,6 +42,7 @@ __FBSDID("$FreeBSD$");
 
 #include <dev/acpica/acpivar.h>
 
+#include <machine/cpu.h>
 #include <machine/nexusvar.h>
 
 int acpi_resume_beep;
@@ -93,6 +94,58 @@ acpi_cpu_c1()
 {
 
 	__asm __volatile("sti; hlt");
+}
+
+/*
+ * Note that we have to use volatile here, so that compiler
+ * knows that 'state' may indeed change independently.
+ * In other places there could be function calls to different
+ * modules which do not allow compilers' optimizer to make
+ * many assumptions, but in this simple function a compiler
+ * would be free to collapse all 'state' manipulation into
+ * a single STATE_RUNNING assignment at the end and to make
+ * cpu_mwait call unconditional.
+ */
+#if 0
+void
+acpi_cpu_mwait_cx_1(u_int hints)
+{
+	volatile int *state;
+
+	state = (volatile int *)PCPU_PTR(monitorbuf);
+	KASSERT(*state == STATE_SLEEPING,
+	    ("cpu_mwait_cx: wrong monitorbuf state"));
+	*state = STATE_MWAIT;
+	cpu_monitor(__DEVOLATILE(state), 0, 0);
+	if (*state == STATE_MWAIT)
+		cpu_mwait(MWAIT_INTR_BRK, hints);
+
+	/*
+	 * We should exit on any event that interrupts mwait,
+	 * because that event might be a wanted interrupt.
+	 */
+	*state = STATE_RUNNING;
+}
+#endif
+
+static __inline int
+state_check(volatile const void *addr, uintptr_t wanted)
+{
+	return (*(volatile const int *)addr != (int)wanted);
+}
+
+void
+acpi_cpu_mwait_cx(u_int hints)
+{
+	volatile int *state;
+
+	state = (volatile int *)PCPU_PTR(monitorbuf);
+	KASSERT(*state == STATE_SLEEPING,
+	    ("cpu_mwait_cx: wrong monitorbuf state"));
+	*state = STATE_MWAIT;
+	cpu_memwait_once_flags(state, MWAIT_INTRBREAK,
+	    hints, state_check, STATE_MWAIT);
+	*state = STATE_RUNNING;
 }
 
 /*
