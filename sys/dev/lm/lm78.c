@@ -218,56 +218,62 @@ static const struct lm_sensor nct6776f_sensors[] = {
 };
 
 static const struct lm_sensor nct6779d_sensors[] = {
+	/*
+	 * 0:0x27 - SMIOVT1 temperature source reading (6:0x21).
+	 * 0:0x73 - SYSFANOUT fan control temperature reading.
+	 * 0:0x75 - CPUFANOUT fan control temperature reading.
+	 * 1:0x51 - SMIOVT2 temperature source reading (6:0x22).
+	 * 4:0x90 - SYSTIN temperature reading.
+	 * 4:0x91 - CPUTIN temperature reading.
+	 * 4:0x92 - AUXTIN0 temperature reading.
+	 * 4:0x93 - AUXTIN1 temperature reading.
+	 * 4:0x94 - AUXTIN2 temperature reading.
+	 * 4:0x95 - AUXTIN3 temperature reading.
+	 * 4:0xB0 - 13-bit SYSFANIN Fan Count (validity can be determined).
+	 * 4:0xB2 - 13-bit CPUFANIN Fan Count (validity can be determined).
+	 * 4:0xC0 - SYSFANIN Speed.
+	 * 4:0xC2 - CPUFANIN Speed.
+	 * 6:0x49-0xff - reserved, but 0x56-0x5e mirror 4:0xC0-...
+	 * 7:0x20 - PECI Temperature Reading Register.
+	 */
 	/* Voltage */
-#if 0
-	{ "VCore", SENSOR_VOLTS_DC, 0, 0x20, lm_refresh_volt, RFACT_NONE / 2},
-	{ "+12V", SENSOR_VOLTS_DC, 0, 0x21, lm_refresh_volt, RFACT(56, 10) / 2 },
-	{ "+3.3V", SENSOR_VOLTS_DC, 0, 0x22, lm_refresh_volt, RFACT(34, 34) / 2 },
-	{ "+3.3V", SENSOR_VOLTS_DC, 0, 0x23, lm_refresh_volt, RFACT(34, 34) / 2 },
-	{ "-12V", SENSOR_VOLTS_DC, 0, 0x24, wb_w83627ehf_refresh_nvolt },
-	{ "", SENSOR_VOLTS_DC, 0, 0x25, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "", SENSOR_VOLTS_DC, 0, 0x26, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "3.3VSB", SENSOR_VOLTS_DC, 5, 0x50, lm_refresh_volt, RFACT(34, 34) / 2 },
-	{ "VBAT", SENSOR_VOLTS_DC, 5, 0x51, lm_refresh_volt, RFACT_NONE / 2 },
-#else
 	{ "VCore", SENSOR_VOLTS_DC, 4, 0x80, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "[VIN0]", SENSOR_VOLTS_DC, 4, 0x81, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "+3.3V [AVCC]", SENSOR_VOLTS_DC, 4, 0x82, lm_refresh_volt, RFACT_NONE },
-	{ "+3.3V [3VCC]", SENSOR_VOLTS_DC, 4, 0x83, lm_refresh_volt, RFACT_NONE },
-	{ "[VIN1]", SENSOR_VOLTS_DC, 4, 0x84, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "[VIN2]", SENSOR_VOLTS_DC, 4, 0x85, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "[VIN3]", SENSOR_VOLTS_DC, 4, 0x86, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "3.3VSB", SENSOR_VOLTS_DC, 4, 0x87, lm_refresh_volt, RFACT_NONE },
+	{ "[VIN1]", SENSOR_VOLTS_DC, 4, 0x81, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "AVCC", SENSOR_VOLTS_DC, 4, 0x82, lm_refresh_volt, RFACT_NONE },
+	{ "3VCC", SENSOR_VOLTS_DC, 4, 0x83, lm_refresh_volt, RFACT_NONE },
+	{ "[VIN0]", SENSOR_VOLTS_DC, 4, 0x84, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN8]", SENSOR_VOLTS_DC, 4, 0x85, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN4]", SENSOR_VOLTS_DC, 4, 0x86, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "3VSB", SENSOR_VOLTS_DC, 4, 0x87, lm_refresh_volt, RFACT_NONE },
 	{ "VBAT", SENSOR_VOLTS_DC, 4, 0x88, lm_refresh_volt, RFACT_NONE },
 
-	{ "", SENSOR_VOLTS_DC, 4, 0x89, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "", SENSOR_VOLTS_DC, 4, 0x8a, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "", SENSOR_VOLTS_DC, 4, 0x8b, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "", SENSOR_VOLTS_DC, 4, 0x8c, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "", SENSOR_VOLTS_DC, 4, 0x8d, lm_refresh_volt, RFACT_NONE / 2 },
-	{ "", SENSOR_VOLTS_DC, 4, 0x8e, lm_refresh_volt, RFACT_NONE / 2 },
-
-#endif
+	{ "VTT", SENSOR_VOLTS_DC, 4, 0x89, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN5]", SENSOR_VOLTS_DC, 4, 0x8a, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN6]", SENSOR_VOLTS_DC, 4, 0x8b, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN2]", SENSOR_VOLTS_DC, 4, 0x8c, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN3]", SENSOR_VOLTS_DC, 4, 0x8d, lm_refresh_volt, RFACT_NONE / 2 },
+	{ "[VIN7]", SENSOR_VOLTS_DC, 4, 0x8e, lm_refresh_volt, RFACT_NONE / 2 },
 
 	/* Temperature */
-	{ "System", SENSOR_TEMP, 0, 0x27, lm_refresh_temp },
-	{ "CPU", SENSOR_TEMP, 1, 0x50, wb_refresh_temp },
+	{ "System", SENSOR_TEMP, 4, 0x90, lm_refresh_temp },
+	{ "CPU", SENSOR_TEMP, 4, 0x91, lm_refresh_temp },
+	{ "System Fan Control", SENSOR_TEMP, 0, 0x73, wb_refresh_temp },
+	{ "CPU Fan Control", SENSOR_TEMP, 0, 0x75, wb_refresh_temp },
 
 	/* Fans */
 	/* both sets seem to work fine */
-	/* except, maybe maybe, for divisor */
 #if 1
-	{ "System", SENSOR_FANRPM, 6, 0x56, wb_nct6776f_refresh_fanrpm },
-	{ "CPU", SENSOR_FANRPM, 6, 0x58, wb_nct6776f_refresh_fanrpm },
-	{ "Aux", SENSOR_FANRPM, 6, 0x5a, wb_nct6776f_refresh_fanrpm },
-	{ "", SENSOR_FANRPM, 6, 0x5c, wb_nct6776f_refresh_fanrpm },
-	{ "", SENSOR_FANRPM, 6, 0x5e, wb_nct6776f_refresh_fanrpm },
+	{ "System", SENSOR_FANRPM, 4, 0xc0, wb_nct6776f_refresh_fanrpm },
+	{ "CPU", SENSOR_FANRPM, 4, 0xc2, wb_nct6776f_refresh_fanrpm },
+	{ "Aux0", SENSOR_FANRPM, 4, 0xc4, wb_nct6776f_refresh_fanrpm },
+	{ "Aux1", SENSOR_FANRPM, 4, 0xc6, wb_nct6776f_refresh_fanrpm },
+	{ "Aux2", SENSOR_FANRPM, 4, 0xc8, wb_nct6776f_refresh_fanrpm },
 #else
-	{ "", SENSOR_FANRPM, 4, 0xb0, wb_nct6779d_refresh_fanrpm },
-	{ "", SENSOR_FANRPM, 4, 0xb2, wb_nct6779d_refresh_fanrpm },
-	{ "", SENSOR_FANRPM, 4, 0xb4, wb_nct6779d_refresh_fanrpm },
-	{ "", SENSOR_FANRPM, 4, 0xb6, wb_nct6779d_refresh_fanrpm },
-	{ "", SENSOR_FANRPM, 4, 0xb8, wb_nct6779d_refresh_fanrpm },
+	{ "System", SENSOR_FANRPM, 4, 0xb0, wb_nct6779d_refresh_fanrpm },
+	{ "CPU", SENSOR_FANRPM, 4, 0xb2, wb_nct6779d_refresh_fanrpm },
+	{ "Aux0", SENSOR_FANRPM, 4, 0xb4, wb_nct6779d_refresh_fanrpm },
+	{ "Aux1", SENSOR_FANRPM, 4, 0xb6, wb_nct6779d_refresh_fanrpm },
+	{ "Aux2", SENSOR_FANRPM, 4, 0xb8, wb_nct6779d_refresh_fanrpm },
 #endif
 
 	{ NULL }
