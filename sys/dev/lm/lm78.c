@@ -956,7 +956,7 @@ wb_nct6776f_refresh_fanrpm(struct lm_softc *sc, int n)
 	datah = sc->lm_readreg(sc, sc->lm_sensors[n].reg);
 	datal = sc->lm_readreg(sc, sc->lm_sensors[n].reg + 1);
 
-	if (datah == 0xff) {
+	if (datah == 0xff || (datah == 0 && datal == 0)) {
 		sensor->flags |= SENSOR_FINVALID;
 		sensor->value = 0;
 	} else {
