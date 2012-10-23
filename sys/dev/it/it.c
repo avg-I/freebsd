@@ -155,7 +155,7 @@ it_attach(struct device *dev)
 	sc->numsensors = IT_NUM_SENSORS;
 
 	cr = it_readreg(sc, ITD_COREID);
-	if (cr == IT_COREID_12) { /* XXX perhaps >= ? */
+	if (cr >= IT_COREID_12) {
 		/* Force use of 16-bit fan counters. */
 		cr = it_readreg(sc, ITD_FAN_CTL16);
 		it_writereg(sc, ITD_FAN_CTL16, cr | IT_FAN16_MASK);
