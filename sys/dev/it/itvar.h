@@ -29,7 +29,7 @@
 #ifndef _DEV_ISA_ITVAR_H
 #define _DEV_ISA_ITVAR_H
 
-#define IT_NUM_SENSORS	15
+#define IT_NUM_SENSORS	17
 
 /* chip ids */
 #define IT_ID_IT87	0x90
@@ -62,6 +62,7 @@
 
 #define ITD_SENSORFANBASE	0x0d	/* Fan from 0x0d to 0x0f */
 #define ITD_SENSORFANBASE_EXT	0x18	/* Extended fan (upper 8 bits) from 0x18 to 0x1a */
+#define ITD_SENSORFANBASE2	0x80	/* 16-bit: 81:80, 83:82 */
 #define ITD_SENSORVOLTBASE	0x20	/* VIN from 0x20 to 0x28 */
 #define ITD_SENSORTEMPBASE	0x29	/* Temperature from 0x29 to 0x2b */
 

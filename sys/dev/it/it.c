@@ -141,6 +141,7 @@ static int
 it_attach(struct device *dev)
 {
 	struct it_softc *sc = device_get_softc(dev);
+	int fancount;
 	int i;
 	u_int8_t cr;
 
@@ -162,9 +163,15 @@ it_attach(struct device *dev)
 		sc->fan16bit = 1;
 	}
 
-	it_setup_fan(sc, 0, 3);
-	it_setup_volt(sc, 3, 9);
-	it_setup_temp(sc, 12, 3);
+	fancount = 5;
+	if (!sc->fan16bit) {
+		fancount -= 2;
+		sc->numsensors -= 2;
+	}
+
+	it_setup_fan(sc, 0, fancount);
+	it_setup_volt(sc, fancount, 9);
+	it_setup_temp(sc, fancount + 9, 3);
 
 	if (sensor_task_register(sc, it_refresh, 5)) {
 		device_printf(sc->sc_dev, "unable to register update task\n");
@@ -344,6 +351,17 @@ it_16bit_fanrpm(struct it_softc *sc, struct ksensor *sensors)
 		else
 			sensors[i].flags |= SENSOR_FINVALID;
 	}
+	for (i = 0; i < 2; i++) {
+		sdata = it_readreg(sc, ITD_SENSORFANBASE2 + 2 * i + 1);
+		sdata <<= 8;
+		sdata |= it_readreg(sc, ITD_SENSORFANBASE2 + 2 * i);
+		if (sdata != 0xffff && sdata != 0) {
+			sensors[3 + i].flags &= ~SENSOR_FINVALID;
+			sensors[3 + i].value = (1350000 / 2) / sdata;
+		}
+		else
+			sensors[3 + i].flags |= SENSOR_FINVALID;
+	}
 }
 
 /*
@@ -354,12 +372,15 @@ static void
 it_refresh_sensor_data(struct it_softc *sc)
 {
 	/* Refresh our stored data for every sensor */
-	it_generic_stemp(sc, &sc->sensors[12]);
-	it_generic_svolt(sc, &sc->sensors[3]);
-	if (sc->fan16bit)
+	if (sc->fan16bit) {
 		it_16bit_fanrpm(sc, &sc->sensors[0]);
-	else
+		it_generic_svolt(sc, &sc->sensors[5]);
+		it_generic_stemp(sc, &sc->sensors[14]);
+	} else {
 		it_generic_fanrpm(sc, &sc->sensors[0]);
+		it_generic_svolt(sc, &sc->sensors[3]);
+		it_generic_stemp(sc, &sc->sensors[12]);
+	}
 }
 
 static void
