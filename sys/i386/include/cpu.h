@@ -43,6 +43,8 @@
 #include <machine/frame.h>
 #include <machine/segments.h>
 
+#ifdef _KERNEL
+
 #define	cpu_exec(p)	/* nothing */
 #define	cpu_swapin(p)	/* nothing */
 #define	cpu_getstack(td)		((td)->td_frame->tf_esp)
@@ -53,7 +55,6 @@
 	((ISPL((framep)->tf_cs) == SEL_UPL) || ((framep)->tf_eflags & PSL_VM))
 #define	TRAPF_PC(framep)	((framep)->tf_eip)
 
-#ifdef _KERNEL
 /*
  * Struct containing pointers to CPU management functions whose
  * implementation is run time selectable.  Selection can be made,
@@ -67,6 +68,7 @@ struct cpu_ops {
 };
 
 extern struct	cpu_ops cpu_ops;
+
 extern char	btext[];
 extern char	etext[];
 
