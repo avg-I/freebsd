@@ -1428,6 +1428,7 @@ out:
 	    busy, curcpu);
 }
 
+#ifdef SMP
 int
 cpu_idle_wakeup(int cpu)
 {
@@ -1446,6 +1447,7 @@ cpu_idle_wakeup(int cpu)
 		*state = STATE_RUNNING;
 	return (1);
 }
+#endif
 
 /*
  * Ordered by speed/power consumption.
