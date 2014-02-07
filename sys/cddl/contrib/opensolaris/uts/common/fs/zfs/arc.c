@@ -4014,18 +4014,21 @@ arc_init(void)
 	arc_min_prefetch_lifespan = 1 * hz;
 
 	/* Start out with 1/8 of all memory */
-	arc_c = kmem_size() / 8;
+	arc_c = (uint64_t)physmem * PAGESIZE / 8;
 
-#ifdef sun
 #ifdef _KERNEL
 	/*
 	 * On architectures where the physical memory can be larger
 	 * than the addressable space (intel in 32-bit mode), we may
 	 * need to limit the cache to 1/8 of VM size.
 	 */
+#ifdef illumos
 	arc_c = MIN(arc_c, vmem_size(heap_arena, VMEM_ALLOC | VMEM_FREE) / 8);
+#else
+	arc_c = MIN(arc_c, kmem_size() / 8);
 #endif
-#endif	/* sun */
+#endif
+
 	/* set min cache to 1/32 of all memory, or 16MB, whichever is more */
 	arc_c_min = MAX(arc_c / 4, 64<<18);
 	/* set max to 1/2 of all memory, or all but 1GB, whichever is more */
@@ -4040,7 +4043,7 @@ arc_init(void)
 	 * Allow the tunables to override our calculations if they are
 	 * reasonable (ie. over 16MB)
 	 */
-	if (zfs_arc_max > 64<<18 && zfs_arc_max < kmem_size())
+	if (zfs_arc_max > 64<<18 && zfs_arc_max < (uint64_t)physmem * PAGESIZE)
 		arc_c_max = zfs_arc_max;
 	if (zfs_arc_min > 64<<18 && zfs_arc_min <= arc_c_max)
 		arc_c_min = zfs_arc_min;
