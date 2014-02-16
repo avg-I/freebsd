@@ -114,30 +114,6 @@ zfs_kmem_free(void *buf, size_t size __unused)
 	free(buf, M_SOLARIS);
 }
 
-static uint64_t kmem_size_val;
-
-static void
-kmem_size_init(void *unused __unused)
-{
-
-	kmem_size_val = vm_map_max(kmem_map) - vm_map_min(kmem_map);
-}
-SYSINIT(kmem_size_init, SI_SUB_KMEM, SI_ORDER_ANY, kmem_size_init, NULL);
-
-uint64_t
-kmem_size(void)
-{
-
-	return (kmem_size_val);
-}
-
-uint64_t
-kmem_used(void)
-{
-
-	return (vmem_size(kmem_arena, VMEM_ALLOC));
-}
-
 static int
 kmem_std_constructor(void *mem, int size __unused, void *private, int flags)
 {

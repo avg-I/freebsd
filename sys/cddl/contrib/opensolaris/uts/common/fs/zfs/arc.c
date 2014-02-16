@@ -2492,7 +2492,8 @@ arc_reclaim_needed(void)
 		return (1);
 #endif
 #else	/* !sun */
-	if (kmem_used() > (kmem_size() * 3) / 4)
+	if (vmem_size(kmem_arena, VMEM_FREE) <
+	    (vmem_size(kmem_arena, VMEM_FREE | VMEM_ALLOC) >> 2))
 		return (1);
 #endif	/* sun */
 
@@ -4025,7 +4026,7 @@ arc_init(void)
 #ifdef illumos
 	arc_c = MIN(arc_c, vmem_size(heap_arena, VMEM_ALLOC | VMEM_FREE) / 8);
 #else
-	arc_c = MIN(arc_c, kmem_size() / 8);
+	arc_c = MIN(arc_c, vmem_size(kmem_arena, VMEM_ALLOC | VMEM_FREE) / 8);
 #endif
 #endif
 
@@ -4184,7 +4185,7 @@ arc_init(void)
 		printf("ZFS WARNING: Recommended minimum RAM size is 512MB; "
 		    "expect unstable behavior.\n");
 	}
-	if (kmem_size() < 512 * (1 << 20)) {
+	if (vmem_size(kmem_arena, VMEM_ALLOC | VMEM_FREE) < 512 * (1 << 20)) {
 		printf("ZFS WARNING: Recommended minimum kmem_size is 512MB; "
 		    "expect unstable behavior.\n");
 		printf("             Consider tuning vm.kmem_size and "
