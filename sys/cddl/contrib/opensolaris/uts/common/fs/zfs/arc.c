@@ -2438,7 +2438,7 @@ arc_reclaim_needed(void)
 {
 
 #ifdef _KERNEL
-
+#ifdef __FreeBSD__
 	if (needfree)
 		return (1);
 
@@ -2448,8 +2448,7 @@ arc_reclaim_needed(void)
 	 */
 	if (vm_paging_needed())
 		return (1);
-
-#ifdef sun
+#else
 	/*
 	 * take 'desfree' extra pages, so we reclaim sooner, rather than later
 	 */
@@ -2474,7 +2473,7 @@ arc_reclaim_needed(void)
 	 */
 	if (availrmem < swapfs_minfree + swapfs_reserve + extra)
 		return (1);
-
+#endif
 #if defined(__i386)
 	/*
 	 * If we're on an i386 platform, it's possible that we'll exhaust the
@@ -2491,12 +2490,6 @@ arc_reclaim_needed(void)
 	    (btop(vmem_size(heap_arena, VMEM_FREE | VMEM_ALLOC)) >> 2))
 		return (1);
 #endif
-#else	/* !sun */
-	if (vmem_size(heap_arena, VMEM_FREE) <
-	    (vmem_size(heap_arena, VMEM_FREE | VMEM_ALLOC) >> 2))
-		return (1);
-#endif	/* sun */
-
 #else
 	if (spa_get_random(100) == 0)
 		return (1);
