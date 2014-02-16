@@ -2492,8 +2492,8 @@ arc_reclaim_needed(void)
 		return (1);
 #endif
 #else	/* !sun */
-	if (vmem_size(kmem_arena, VMEM_FREE) <
-	    (vmem_size(kmem_arena, VMEM_FREE | VMEM_ALLOC) >> 2))
+	if (vmem_size(heap_arena, VMEM_FREE) <
+	    (vmem_size(heap_arena, VMEM_FREE | VMEM_ALLOC) >> 2))
 		return (1);
 #endif	/* sun */
 
@@ -4023,11 +4023,7 @@ arc_init(void)
 	 * than the addressable space (intel in 32-bit mode), we may
 	 * need to limit the cache to 1/8 of VM size.
 	 */
-#ifdef illumos
 	arc_c = MIN(arc_c, vmem_size(heap_arena, VMEM_ALLOC | VMEM_FREE) / 8);
-#else
-	arc_c = MIN(arc_c, vmem_size(kmem_arena, VMEM_ALLOC | VMEM_FREE) / 8);
-#endif
 #endif
 
 	/* set min cache to 1/32 of all memory, or 16MB, whichever is more */
@@ -4185,7 +4181,7 @@ arc_init(void)
 		printf("ZFS WARNING: Recommended minimum RAM size is 512MB; "
 		    "expect unstable behavior.\n");
 	}
-	if (vmem_size(kmem_arena, VMEM_ALLOC | VMEM_FREE) < 512 * (1 << 20)) {
+	if (vmem_size(heap_arena, VMEM_ALLOC | VMEM_FREE) < 512 * (1 << 20)) {
 		printf("ZFS WARNING: Recommended minimum kmem_size is 512MB; "
 		    "expect unstable behavior.\n");
 		printf("             Consider tuning vm.kmem_size and "
