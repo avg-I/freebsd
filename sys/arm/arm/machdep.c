@@ -98,9 +98,11 @@ __FBSDID("$FreeBSD$");
 #include <machine/metadata.h>
 #include <machine/pcb.h>
 #include <machine/physmem.h>
+#include <machine/platform.h>
 #include <machine/reg.h>
 #include <machine/trap.h>
 #include <machine/undefined.h>
+#include <machine/vfp.h>
 #include <machine/vmparam.h>
 #include <machine/sysarch.h>
 
@@ -142,10 +144,6 @@ extern vm_offset_t ksym_start, ksym_end;
 #define KERNEL_PT_MAX	78
 
 static struct pv_addr kernel_pt_table[KERNEL_PT_MAX];
-
-extern u_int data_abort_handler_address;
-extern u_int prefetch_abort_handler_address;
-extern u_int undefined_handler_address;
 
 vm_paddr_t pmap_pa;
 
@@ -370,8 +368,8 @@ cpu_startup(void *dummy)
 	    (uintmax_t)arm32_ptob(realmem),
 	    (uintmax_t)arm32_ptob(realmem) / mbyte);
 	printf("avail memory = %ju (%ju MB)\n",
-	    (uintmax_t)arm32_ptob(cnt.v_free_count),
-	    (uintmax_t)arm32_ptob(cnt.v_free_count) / mbyte);
+	    (uintmax_t)arm32_ptob(vm_cnt.v_free_count),
+	    (uintmax_t)arm32_ptob(vm_cnt.v_free_count) / mbyte);
 	if (bootverbose) {
 		arm_physmem_print_tables();
 		arm_devmap_print_table();
@@ -379,8 +377,6 @@ cpu_startup(void *dummy)
 
 	bufinit();
 	vm_pager_bufferinit();
-	pcb->un_32.pcb32_und_sp = (u_int)thread0.td_kstack +
-	    USPACE_UNDEF_STACK_TOP;
 	pcb->un_32.pcb32_sp = (u_int)thread0.td_kstack +
 	    USPACE_SVC_STACK_TOP;
 	vector_page_setprot(VM_PROT_READ);
@@ -410,7 +406,11 @@ cpu_flush_dcache(void *ptr, size_t len)
 {
 
 	cpu_dcache_wb_range((uintptr_t)ptr, len);
+#ifdef ARM_L2_PIPT
+	cpu_l2cache_wb_range((uintptr_t)vtophys(ptr), len);
+#else
 	cpu_l2cache_wb_range((uintptr_t)ptr, len);
+#endif
 }
 
 /* Get current clock frequency for the given cpu id. */
@@ -425,24 +425,20 @@ void
 cpu_idle(int busy)
 {
 	
-	CTR2(KTR_SPARE2, "cpu_idle(%d) at %d",
-	    busy, curcpu);
+	CTR2(KTR_SPARE2, "cpu_idle(%d) at %d", busy, curcpu);
+	spinlock_enter();
 #ifndef NO_EVENTTIMERS
-	if (!busy) {
-		critical_enter();
+	if (!busy)
 		cpu_idleclock();
-	}
 #endif
 	if (!sched_runnable())
 		cpu_sleep(0);
 #ifndef NO_EVENTTIMERS
-	if (!busy) {
+	if (!busy)
 		cpu_activeclock();
-		critical_exit();
-	}
 #endif
-	CTR2(KTR_SPARE2, "cpu_idle(%d) at %d done",
-	    busy, curcpu);
+	spinlock_exit();
+	CTR2(KTR_SPARE2, "cpu_idle(%d) at %d done", busy, curcpu);
 }
 
 int
@@ -451,6 +447,30 @@ cpu_idle_wakeup(int cpu)
 
 	return (0);
 }
+
+/*
+ * Most ARM platforms don't need to do anything special to init their clocks
+ * (they get intialized during normal device attachment), and by not defining a
+ * cpu_initclocks() function they get this generic one.  Any platform that needs
+ * to do something special can just provide their own implementation, which will
+ * override this one due to the weak linkage.
+ */
+void
+arm_generic_initclocks(void)
+{
+
+#ifndef NO_EVENTTIMERS
+#ifdef SMP
+	if (PCPU_GET(cpuid) == 0)
+		cpu_initclocks_bsp();
+	else
+		cpu_initclocks_ap();
+#else
+	cpu_initclocks_bsp();
+#endif
+#endif
+}
+__weak_reference(arm_generic_initclocks, cpu_initclocks);
 
 int
 fill_regs(struct thread *td, struct reg *regs)
@@ -714,28 +734,26 @@ sys_sigreturn(td, uap)
 		const struct __ucontext *sigcntxp;
 	} */ *uap;
 {
-	struct sigframe sf;
-	struct trapframe *tf;
+	ucontext_t uc;
 	int spsr;
 	
 	if (uap == NULL)
 		return (EFAULT);
-	if (copyin(uap->sigcntxp, &sf, sizeof(sf)))
+	if (copyin(uap->sigcntxp, &uc, sizeof(uc)))
 		return (EFAULT);
 	/*
 	 * Make sure the processor mode has not been tampered with and
 	 * interrupts have not been disabled.
 	 */
-	spsr = sf.sf_uc.uc_mcontext.__gregs[_REG_CPSR];
+	spsr = uc.uc_mcontext.__gregs[_REG_CPSR];
 	if ((spsr & PSR_MODE) != PSR_USR32_MODE ||
 	    (spsr & (I32_bit | F32_bit)) != 0)
 		return (EINVAL);
 		/* Restore register context. */
-	tf = td->td_frame;
-	set_mcontext(td, &sf.sf_uc.uc_mcontext);
+	set_mcontext(td, &uc.uc_mcontext);
 
 	/* Restore signal mask. */
-	kern_sigprocmask(td, SIG_SETMASK, &sf.sf_uc.uc_sigmask, NULL, 0);
+	kern_sigprocmask(td, SIG_SETMASK, &uc.uc_sigmask, NULL, 0);
 
 	return (EJUSTRETURN);
 }
@@ -969,6 +987,8 @@ init_proc0(vm_offset_t kstack)
 	thread0.td_pcb = (struct pcb *)
 		(thread0.td_kstack + KSTACK_PAGES * PAGE_SIZE) - 1;
 	thread0.td_pcb->pcb_flags = 0;
+	thread0.td_pcb->pcb_vfpcpu = -1;
+	thread0.td_pcb->pcb_vfpstate.fpscr = VFPSCR_DN | VFPSCR_FZ;
 	thread0.td_frame = &proc0_tf;
 	pcpup->pc_curpcb = thread0.td_pcb;
 }
@@ -1056,10 +1076,10 @@ initarm(struct arm_boot_params *abp)
 #endif
 
 	if (OF_install(OFW_FDT, 0) == FALSE)
-		while (1);
+		panic("Cannot install FDT");
 
 	if (OF_init((void *)dtbp) != 0)
-		while (1);
+		panic("OF_init failed with the found device tree");
 
 	/* Grab physical memory regions information from device tree. */
 	if (fdt_get_mem_regions(mem_regions, &mem_regions_sz, &memsize) != 0)
@@ -1072,7 +1092,7 @@ initarm(struct arm_boot_params *abp)
 		    EXFLAG_NODUMP | EXFLAG_NOALLOC);
 
 	/* Platform-specific initialisation */
-	initarm_early_init();
+	platform_probe_and_attach();
 
 	pcpu0_init();
 
@@ -1167,7 +1187,6 @@ initarm(struct arm_boot_params *abp)
 	   (((uint32_t)(lastaddr) - KERNVIRTADDR) + PAGE_MASK) & ~PAGE_MASK,
 	    VM_PROT_READ|VM_PROT_WRITE, PTE_CACHE);
 
-
 	/* Map L1 directory and allocated L2 page tables */
 	pmap_map_chunk(l1pagetable, kernel_l1pt.pv_va, kernel_l1pt.pv_pa,
 	    L1_TABLE_SIZE, VM_PROT_READ|VM_PROT_WRITE, PTE_PAGETABLE);
@@ -1189,9 +1208,9 @@ initarm(struct arm_boot_params *abp)
 	    VM_PROT_READ|VM_PROT_WRITE|VM_PROT_EXECUTE, PTE_CACHE);
 
 	/* Establish static device mappings. */
-	err_devmap = initarm_devmap_init();
+	err_devmap = platform_devmap_init();
 	arm_devmap_bootstrap(l1pagetable, NULL);
-	vm_max_kernel_address = initarm_lastaddr();
+	vm_max_kernel_address = platform_lastaddr();
 
 	cpu_domains((DOMAIN_CLIENT << (PMAP_DOMAIN_KERNEL * 2)) | DOMAIN_CLIENT);
 	pmap_pa = kernel_l1pt.pv_pa;
@@ -1211,7 +1230,7 @@ initarm(struct arm_boot_params *abp)
 	 */
 	OF_interpret("perform-fixup", 0);
 
-	initarm_gpio_init();
+	platform_gpio_init();
 
 	cninit();
 
@@ -1229,7 +1248,7 @@ initarm(struct arm_boot_params *abp)
 		printf("WARNING: could not fully configure devmap, error=%d\n",
 		    err_devmap);
 
-	initarm_late_init();
+	platform_late_init();
 
 	/*
 	 * Pages were allocated during the secondary bootstrap for the
@@ -1255,15 +1274,10 @@ initarm(struct arm_boot_params *abp)
 	 */
 	cpu_idcache_wbinv_all();
 
-	/* Set stack for exception handlers */
-	data_abort_handler_address = (u_int)data_abort_handler;
-	prefetch_abort_handler_address = (u_int)prefetch_abort_handler;
-	undefined_handler_address = (u_int)undefinedinstruction_bounce;
 	undefined_init();
 
 	init_proc0(kernelstack.pv_va);
 
-	arm_intrnames_init();
 	arm_vector_init(ARM_VECTORS_HIGH, ARM_VEC_ALL);
 	pmap_bootstrap(freemempos, &kernel_l1pt);
 	msgbufp = (void *)msgbufpv.pv_va;

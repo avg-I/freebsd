@@ -78,7 +78,6 @@ __FBSDID("$FreeBSD$");
 #ifdef INET6
 #include <netinet/icmp6.h>
 #include <netinet/ip6.h>
-#include <netinet6/ip6protosw.h>
 #include <netinet6/in6_var.h>
 #include <netinet6/ip6_var.h>
 #include <netinet6/scope6_var.h>
@@ -435,18 +434,22 @@ carp_hmac_verify(struct carp_softc *sc, uint32_t counter[2],
  * but it seems more efficient this way or not possible otherwise.
  */
 #ifdef INET
-void
-carp_input(struct mbuf *m, int hlen)
+int
+carp_input(struct mbuf **mp, int *offp, int proto)
 {
+	struct mbuf *m = *mp;
 	struct ip *ip = mtod(m, struct ip *);
 	struct carp_header *ch;
 	int iplen, len;
+
+	iplen = *offp;
+	*mp = NULL;
 
 	CARPSTATS_INC(carps_ipackets);
 
 	if (!V_carp_allow) {
 		m_freem(m);
-		return;
+		return (IPPROTO_DONE);
 	}
 
 	/* verify that the IP TTL is 255.  */
@@ -456,7 +459,7 @@ carp_input(struct mbuf *m, int hlen)
 		    ip->ip_ttl,
 		    m->m_pkthdr.rcvif->if_xname);
 		m_freem(m);
-		return;
+		return (IPPROTO_DONE);
 	}
 
 	iplen = ip->ip_hl << 2;
@@ -467,14 +470,14 @@ carp_input(struct mbuf *m, int hlen)
 		    "on %s\n", __func__, m->m_len - sizeof(struct ip),
 		    m->m_pkthdr.rcvif->if_xname);
 		m_freem(m);
-		return;
+		return (IPPROTO_DONE);
 	}
 
 	if (iplen + sizeof(*ch) < m->m_len) {
 		if ((m = m_pullup(m, iplen + sizeof(*ch))) == NULL) {
 			CARPSTATS_INC(carps_hdrops);
 			CARP_DEBUG("%s: pullup failed\n", __func__);
-			return;
+			return (IPPROTO_DONE);
 		}
 		ip = mtod(m, struct ip *);
 	}
@@ -491,12 +494,12 @@ carp_input(struct mbuf *m, int hlen)
 		    m->m_pkthdr.len,
 		    m->m_pkthdr.rcvif->if_xname);
 		m_freem(m);
-		return;
+		return (IPPROTO_DONE);
 	}
 
 	if ((m = m_pullup(m, len)) == NULL) {
 		CARPSTATS_INC(carps_hdrops);
-		return;
+		return (IPPROTO_DONE);
 	}
 	ip = mtod(m, struct ip *);
 	ch = (struct carp_header *)((char *)ip + iplen);
@@ -508,11 +511,12 @@ carp_input(struct mbuf *m, int hlen)
 		CARP_DEBUG("%s: checksum failed on %s\n", __func__,
 		    m->m_pkthdr.rcvif->if_xname);
 		m_freem(m);
-		return;
+		return (IPPROTO_DONE);
 	}
 	m->m_data -= iplen;
 
 	carp_input_c(m, ch, AF_INET);
+	return (IPPROTO_DONE);
 }
 #endif
 
@@ -764,6 +768,35 @@ carp_send_ad(void *v)
 }
 
 static void
+carp_send_ad_error(struct carp_softc *sc, int error)
+{
+
+	if (error) {
+		if (sc->sc_sendad_errors < INT_MAX)
+			sc->sc_sendad_errors++;
+		if (sc->sc_sendad_errors == CARP_SENDAD_MAX_ERRORS) {
+			static const char fmt[] = "send error %d on %s";
+			char msg[sizeof(fmt) + IFNAMSIZ];
+
+			sprintf(msg, fmt, error, sc->sc_carpdev->if_xname);
+			carp_demote_adj(V_carp_senderr_adj, msg);
+		}
+		sc->sc_sendad_success = 0;
+	} else {
+		if (sc->sc_sendad_errors >= CARP_SENDAD_MAX_ERRORS &&
+		    ++sc->sc_sendad_success >= CARP_SENDAD_MIN_SUCCESS) {
+			static const char fmt[] = "send ok on %s";
+			char msg[sizeof(fmt) + IFNAMSIZ];
+
+			sprintf(msg, fmt, sc->sc_carpdev->if_xname);
+			carp_demote_adj(-V_carp_senderr_adj, msg);
+			sc->sc_sendad_errors = 0;
+		} else
+			sc->sc_sendad_errors = 0;
+	}
+}
+
+static void
 carp_send_ad_locked(struct carp_softc *sc)
 {
 	struct carp_header ch;
@@ -839,25 +872,8 @@ carp_send_ad_locked(struct carp_softc *sc)
 
 		CARPSTATS_INC(carps_opackets);
 
-		if (ip_output(m, NULL, NULL, IP_RAWOUTPUT,
-		    &sc->sc_carpdev->if_carp->cif_imo, NULL)) {
-			if (sc->sc_sendad_errors < INT_MAX)
-				sc->sc_sendad_errors++;
-			if (sc->sc_sendad_errors == CARP_SENDAD_MAX_ERRORS)
-				carp_demote_adj(V_carp_senderr_adj,
-				    "send error");
-			sc->sc_sendad_success = 0;
-		} else {
-			if (sc->sc_sendad_errors >= CARP_SENDAD_MAX_ERRORS) {
-				if (++sc->sc_sendad_success >=
-				    CARP_SENDAD_MIN_SUCCESS) {
-					carp_demote_adj(-V_carp_senderr_adj,
-					    "send ok");
-					sc->sc_sendad_errors = 0;
-				}
-			} else
-				sc->sc_sendad_errors = 0;
-		}
+		carp_send_ad_error(sc, ip_output(m, NULL, NULL, IP_RAWOUTPUT,
+		    &sc->sc_carpdev->if_carp->cif_imo, NULL));
 	}
 #endif /* INET */
 #ifdef INET6
@@ -913,25 +929,8 @@ carp_send_ad_locked(struct carp_softc *sc)
 
 		CARPSTATS_INC(carps_opackets6);
 
-		if (ip6_output(m, NULL, NULL, 0,
-		    &sc->sc_carpdev->if_carp->cif_im6o, NULL, NULL)) {
-			if (sc->sc_sendad_errors < INT_MAX)
-				sc->sc_sendad_errors++;
-			if (sc->sc_sendad_errors == CARP_SENDAD_MAX_ERRORS)
-				carp_demote_adj(V_carp_senderr_adj,
-				    "send6 error");
-			sc->sc_sendad_success = 0;
-		} else {
-			if (sc->sc_sendad_errors >= CARP_SENDAD_MAX_ERRORS) {
-				if (++sc->sc_sendad_success >=
-				    CARP_SENDAD_MIN_SUCCESS) {
-					carp_demote_adj(-V_carp_senderr_adj,
-					    "send6 ok");
-					sc->sc_sendad_errors = 0;
-				}
-			} else
-				sc->sc_sendad_errors = 0;
-		}
+		carp_send_ad_error(sc, ip6_output(m, NULL, NULL, 0,
+		    &sc->sc_carpdev->if_carp->cif_im6o, NULL, NULL));
 	}
 #endif /* INET6 */
 
@@ -2055,7 +2054,7 @@ static struct protosw in_carp_protosw = {
 	.pr_protocol =		IPPROTO_CARP,
 	.pr_flags =		PR_ATOMIC|PR_ADDR,
 	.pr_input =		carp_input,
-	.pr_output =		(pr_output_t *)rip_output,
+	.pr_output =		rip_output,
 	.pr_ctloutput =		rip_ctloutput,
 	.pr_usrreqs =		&rip_usrreqs
 };
@@ -2063,7 +2062,7 @@ static struct protosw in_carp_protosw = {
 
 #ifdef INET6
 extern	struct domain inet6domain;
-static struct ip6protosw in6_carp_protosw = {
+static struct protosw in6_carp_protosw = {
 	.pr_type =		SOCK_RAW,
 	.pr_domain =		&inet6domain,
 	.pr_protocol =		IPPROTO_CARP,

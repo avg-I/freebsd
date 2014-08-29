@@ -46,6 +46,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/kdb.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
@@ -621,12 +622,14 @@ struct cpu_search {
 	for ((cpu) = 0; (cpu) <= mp_maxid; (cpu)++)		\
 		if (CPU_ISSET(cpu, &mask))
 
-static __inline int cpu_search(const struct cpu_group *cg, struct cpu_search *low,
-    struct cpu_search *high, const int match);
-int cpu_search_lowest(const struct cpu_group *cg, struct cpu_search *low);
-int cpu_search_highest(const struct cpu_group *cg, struct cpu_search *high);
-int cpu_search_both(const struct cpu_group *cg, struct cpu_search *low,
+static __always_inline int cpu_search(const struct cpu_group *cg,
+    struct cpu_search *low, struct cpu_search *high, const int match);
+int __noinline cpu_search_lowest(const struct cpu_group *cg,
+    struct cpu_search *low);
+int __noinline cpu_search_highest(const struct cpu_group *cg,
     struct cpu_search *high);
+int __noinline cpu_search_both(const struct cpu_group *cg,
+    struct cpu_search *low, struct cpu_search *high);
 
 /*
  * Search the tree of cpu_groups for the lowest or highest loaded cpu
@@ -639,7 +642,7 @@ int cpu_search_both(const struct cpu_group *cg, struct cpu_search *low,
  * match argument.  It is reduced to the minimum set for each case.  It is
  * also recursive to the depth of the tree.
  */
-static __inline int
+static __always_inline int
 cpu_search(const struct cpu_group *cg, struct cpu_search *low,
     struct cpu_search *high, const int match)
 {
@@ -1057,32 +1060,27 @@ runq_steal_from(struct runq *rq, int cpu, u_char start)
 	struct rqhead *rqh;
 	struct thread *td, *first;
 	int bit;
-	int pri;
 	int i;
 
 	rqb = &rq->rq_status;
 	bit = start & (RQB_BPW -1);
-	pri = 0;
 	first = NULL;
 again:
 	for (i = RQB_WORD(start); i < RQB_LEN; bit = 0, i++) {
 		if (rqb->rqb_bits[i] == 0)
 			continue;
-		if (bit != 0) {
-			for (pri = bit; pri < RQB_BPW; pri++)
-				if (rqb->rqb_bits[i] & (1ul << pri))
-					break;
-			if (pri >= RQB_BPW)
+		if (bit == 0)
+			bit = RQB_FFS(rqb->rqb_bits[i]);
+		for (; bit < RQB_BPW; bit++) {
+			if ((rqb->rqb_bits[i] & (1ul << bit)) == 0)
 				continue;
-		} else
-			pri = RQB_FFS(rqb->rqb_bits[i]);
-		pri += (i << RQB_L2BPW);
-		rqh = &rq->rq_queues[pri];
-		TAILQ_FOREACH(td, rqh, td_runq) {
-			if (first && THREAD_CAN_MIGRATE(td) &&
-			    THREAD_CAN_SCHED(td, cpu))
-				return (td);
-			first = td;
+			rqh = &rq->rq_queues[bit + (i << RQB_L2BPW)];
+			TAILQ_FOREACH(td, rqh, td_runq) {
+				if (first && THREAD_CAN_MIGRATE(td) &&
+				    THREAD_CAN_SCHED(td, cpu))
+					return (td);
+				first = td;
+			}
 		}
 	}
 	if (start != 0) {
@@ -1859,7 +1857,8 @@ sched_switch(struct thread *td, struct thread *newtd, int flags)
 	ts->ts_rltick = ticks;
 	td->td_lastcpu = td->td_oncpu;
 	td->td_oncpu = NOCPU;
-	preempted = !(td->td_flags & TDF_SLICEEND);
+	preempted = !((td->td_flags & TDF_SLICEEND) ||
+	    (flags & SWT_RELINQUISH));
 	td->td_flags &= ~(TDF_NEEDRESCHED | TDF_SLICEEND);
 	td->td_owepreempt = 0;
 	if (!TD_IS_IDLETHREAD(td))
@@ -2690,7 +2689,6 @@ sched_throw(struct thread *td)
 void
 sched_fork_exit(struct thread *td)
 {
-	struct td_sched *ts;
 	struct tdq *tdq;
 	int cpuid;
 
@@ -2700,7 +2698,6 @@ sched_fork_exit(struct thread *td)
 	 */
 	cpuid = PCPU_GET(cpuid);
 	tdq = TDQ_CPU(cpuid);
-	ts = td->td_sched;
 	if (TD_IS_IDLETHREAD(td))
 		td->td_lock = TDQ_LOCKPTR(tdq);
 	MPASS(td->td_lock == TDQ_LOCKPTR(tdq));

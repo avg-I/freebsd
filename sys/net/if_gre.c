@@ -41,7 +41,6 @@
  * Also supported:  IP in IP encaps (proto 55) as of RFC 2004
  */
 
-#include "opt_atalk.h"
 #include "opt_inet.h"
 #include "opt_inet6.h"
 
@@ -129,7 +128,7 @@ static const struct protosw in_gre_protosw = {
 	.pr_protocol =		IPPROTO_GRE,
 	.pr_flags =		PR_ATOMIC|PR_ADDR,
 	.pr_input =		gre_input,
-	.pr_output =		(pr_output_t *)rip_output,
+	.pr_output =		rip_output,
 	.pr_ctlinput =		rip_ctlinput,
 	.pr_ctloutput =		rip_ctloutput,
 	.pr_usrreqs =		&rip_usrreqs
@@ -140,7 +139,7 @@ static const struct protosw in_mobile_protosw = {
 	.pr_protocol =		IPPROTO_MOBILE,
 	.pr_flags =		PR_ATOMIC|PR_ADDR,
 	.pr_input =		gre_mobile_input,
-	.pr_output =		(pr_output_t *)rip_output,
+	.pr_output =		rip_output,
 	.pr_ctlinput =		rip_ctlinput,
 	.pr_ctloutput =		rip_ctloutput,
 	.pr_usrreqs =		&rip_usrreqs
@@ -438,11 +437,6 @@ gre_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 		case AF_INET6:
 			gre_ip_id = ip_newid();
 			etype = ETHERTYPE_IPV6;
-			break;
-#endif
-#ifdef NETATALK
-		case AF_APPLETALK:
-			etype = ETHERTYPE_ATALK;
 			break;
 #endif
 		default:
