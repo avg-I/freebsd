@@ -13,6 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "PPC.h"
+#include "PPCSubtarget.h"
+#include "MCTargetDesc/PPCMCExpr.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/CodeGen/AsmPrinter.h"
@@ -23,6 +25,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/Target/Mangler.h"
+#include "llvm/Target/TargetMachine.h"
 using namespace llvm;
 
 static MachineModuleInfoMachO &getMachOMMI(AsmPrinter &AP) {
@@ -31,7 +34,9 @@ static MachineModuleInfoMachO &getMachOMMI(AsmPrinter &AP) {
 
 
 static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
+  const TargetMachine &TM = AP.TM;
   MCContext &Ctx = AP.OutContext;
+  bool isDarwin = TM.getSubtarget<PPCSubtarget>().isDarwin();
 
   SmallString<128> Name;
   if (!MO.isGlobal()) {
@@ -41,7 +46,7 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
   } else {    
     const GlobalValue *GV = MO.getGlobal();
     bool isImplicitlyPrivate = false;
-    if (MO.getTargetFlags() == PPCII::MO_DARWIN_STUB ||
+    if (MO.getTargetFlags() == PPCII::MO_PLT_OR_STUB ||
         (MO.getTargetFlags() & PPCII::MO_NLP_FLAG))
       isImplicitlyPrivate = true;
     
@@ -50,7 +55,7 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
   
   // If the target flags on the operand changes the name of the symbol, do that
   // before we return the symbol.
-  if (MO.getTargetFlags() == PPCII::MO_DARWIN_STUB) {
+  if (MO.getTargetFlags() == PPCII::MO_PLT_OR_STUB && isDarwin) {
     Name += "$stub";
     const char *PGP = AP.MAI->getPrivateGlobalPrefix();
     const char *Prefix = "";
@@ -68,7 +73,7 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
     if (MO.isGlobal()) {
       StubSym =
       MachineModuleInfoImpl::
-      StubValueTy(AP.Mang->getSymbol(MO.getGlobal()),
+      StubValueTy(AP.getSymbol(MO.getGlobal()),
                   !MO.getGlobal()->hasInternalLinkage());
     } else {
       Name.erase(Name.end()-5, Name.end());
@@ -94,7 +99,7 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
     if (StubSym.getPointer() == 0) {
       assert(MO.isGlobal() && "Extern symbol not handled yet");
       StubSym = MachineModuleInfoImpl::
-                   StubValueTy(AP.Mang->getSymbol(MO.getGlobal()),
+                   StubValueTy(AP.getSymbol(MO.getGlobal()),
                                !MO.getGlobal()->hasInternalLinkage());
     }
     return Sym;
@@ -111,31 +116,29 @@ static MCOperand GetSymbolRef(const MachineOperand &MO, const MCSymbol *Symbol,
   unsigned access = MO.getTargetFlags() & PPCII::MO_ACCESS_MASK;
 
   switch (access) {
-    case PPCII::MO_HA16: RefKind = isDarwin ? 
-                           MCSymbolRefExpr::VK_PPC_DARWIN_HA16 : 
-                           MCSymbolRefExpr::VK_PPC_GAS_HA16; 
-                         break;
-    case PPCII::MO_LO16: RefKind = isDarwin ? 
-                           MCSymbolRefExpr::VK_PPC_DARWIN_LO16 : 
-                           MCSymbolRefExpr::VK_PPC_GAS_LO16; 
-                         break;
-    case PPCII::MO_TPREL16_HA: RefKind = MCSymbolRefExpr::VK_PPC_TPREL16_HA;
-                               break;
-    case PPCII::MO_TPREL16_LO: RefKind = MCSymbolRefExpr::VK_PPC_TPREL16_LO;
-                               break;
-    case PPCII::MO_DTPREL16_LO: RefKind = MCSymbolRefExpr::VK_PPC_DTPREL16_LO;
-                                break;
-    case PPCII::MO_TLSLD16_LO: RefKind = MCSymbolRefExpr::VK_PPC_GOT_TLSLD16_LO;
-                               break;
-    case PPCII::MO_TOC16_LO: RefKind = MCSymbolRefExpr::VK_PPC_TOC16_LO;
-                             break;
-   }
+    case PPCII::MO_TPREL_LO:
+      RefKind = MCSymbolRefExpr::VK_PPC_TPREL_LO;
+      break;
+    case PPCII::MO_TPREL_HA:
+      RefKind = MCSymbolRefExpr::VK_PPC_TPREL_HA;
+      break;
+    case PPCII::MO_DTPREL_LO:
+      RefKind = MCSymbolRefExpr::VK_PPC_DTPREL_LO;
+      break;
+    case PPCII::MO_TLSLD_LO:
+      RefKind = MCSymbolRefExpr::VK_PPC_GOT_TLSLD_LO;
+      break;
+    case PPCII::MO_TOC_LO:
+      RefKind = MCSymbolRefExpr::VK_PPC_TOC_LO;
+      break;
+    case PPCII::MO_TLS:
+      RefKind = MCSymbolRefExpr::VK_PPC_TLS;
+      break;
+  }
 
-  // FIXME: This isn't right, but we don't have a good way to express this in
-  // the MC Level, see below.
-  if (MO.getTargetFlags() & PPCII::MO_PIC_FLAG)
-    RefKind = MCSymbolRefExpr::VK_None;
-  
+  if (MO.getTargetFlags() == PPCII::MO_PLT_OR_STUB && !isDarwin)
+    RefKind = MCSymbolRefExpr::VK_PLT;
+
   const MCExpr *Expr = MCSymbolRefExpr::Create(Symbol, RefKind, Ctx);
 
   if (!MO.isJTI() && MO.getOffset())
@@ -149,10 +152,18 @@ static MCOperand GetSymbolRef(const MachineOperand &MO, const MCSymbol *Symbol,
     
     const MCExpr *PB = MCSymbolRefExpr::Create(MF->getPICBaseSymbol(), Ctx);
     Expr = MCBinaryExpr::CreateSub(Expr, PB, Ctx);
-    // FIXME: We have no way to make the result be VK_PPC_LO16/VK_PPC_HA16,
-    // since it is not a symbol!
   }
-  
+
+  // Add ha16() / lo16() markers if required.
+  switch (access) {
+    case PPCII::MO_LO:
+      Expr = PPCMCExpr::CreateLo(Expr, isDarwin, Ctx);
+      break;
+    case PPCII::MO_HA:
+      Expr = PPCMCExpr::CreateHa(Expr, isDarwin, Ctx);
+      break;
+  }
+
   return MCOperand::CreateExpr(Expr);
 }
 

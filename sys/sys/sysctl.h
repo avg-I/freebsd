@@ -83,7 +83,7 @@ struct ctlname {
 #define	CTLFLAG_DYN	0x02000000	/* Dynamic oid - can be freed */
 #define	CTLFLAG_SKIP	0x01000000	/* Skip this sysctl when listing */
 #define	CTLMASK_SECURE	0x00F00000	/* Secure level */
-#define	CTLFLAG_TUN	0x00080000	/* Tunable variable */
+#define	CTLFLAG_TUN	0x00080000	/* Default value is loaded from getenv() */
 #define	CTLFLAG_RDTUN	(CTLFLAG_RD|CTLFLAG_TUN)
 #define	CTLFLAG_RWTUN	(CTLFLAG_RW|CTLFLAG_TUN)
 #define	CTLFLAG_MPSAFE	0x00040000	/* Handler is MP safe */
@@ -92,6 +92,7 @@ struct ctlname {
 #define	CTLFLAG_CAPRD	0x00008000	/* Can be read in capability mode */
 #define	CTLFLAG_CAPWR	0x00004000	/* Can be written in capability mode */
 #define	CTLFLAG_STATS	0x00002000	/* Statistics, not a tuneable */
+#define	CTLFLAG_NOFETCH	0x00001000	/* Don't fetch tunable from getenv() */
 #define	CTLFLAG_CAPRW	(CTLFLAG_CAPRD|CTLFLAG_CAPWR)
 
 /*
@@ -130,7 +131,7 @@ struct ctlname {
 #define	REQ_WIRED	2
 
 /* definitions for sysctl_req 'flags' member */
-#if defined(__amd64__) || defined(__ia64__) || defined(__powerpc64__) ||\
+#if defined(__amd64__) || defined(__powerpc64__) ||\
     (defined(__mips__) && defined(__mips_n64))
 #define	SCTL_MASK32	1	/* 32 bit emulation */
 #endif
@@ -161,6 +162,7 @@ SLIST_HEAD(sysctl_oid_list, sysctl_oid);
  * be hidden behind it, expanded by the handler.
  */
 struct sysctl_oid {
+	struct sysctl_oid_list oid_children;
 	struct sysctl_oid_list *oid_parent;
 	SLIST_ENTRY(sysctl_oid) oid_link;
 	int		 oid_number;
@@ -200,14 +202,16 @@ void sysctl_register_oid(struct sysctl_oid *oidp);
 void sysctl_unregister_oid(struct sysctl_oid *oidp);
 
 /* Declare a static oid to allow child oids to be added to it. */
-#define	SYSCTL_DECL(name)						\
-	extern struct sysctl_oid_list sysctl_##name##_children
+#define	SYSCTL_DECL(name)			\
+	extern struct sysctl_oid sysctl__##name
 
 /* Hide these in macros. */
-#define	SYSCTL_CHILDREN(oid_ptr)					\
-	(struct sysctl_oid_list *)(oid_ptr)->oid_arg1
-#define	SYSCTL_CHILDREN_SET(oid_ptr, val)	(oid_ptr)->oid_arg1 = (val)
-#define	SYSCTL_STATIC_CHILDREN(oid_name)	(&sysctl_##oid_name##_children)
+#define	SYSCTL_CHILDREN(oid_ptr)		(&(oid_ptr)->oid_children)
+#define	SYSCTL_PARENT(oid_ptr)					\
+    (((oid_ptr)->oid_parent != &sysctl__children) ?		\
+	__containerof((oid_ptr)->oid_parent, struct sysctl_oid,	\
+	oid_children) : (struct sysctl_oid *)NULL)
+#define	SYSCTL_STATIC_CHILDREN(oid_name)	(&sysctl__##oid_name.oid_children)
 
 /* === Structs and macros related to context handling. === */
 
@@ -220,7 +224,7 @@ struct sysctl_ctx_entry {
 TAILQ_HEAD(sysctl_ctx_list, sysctl_ctx_entry);
 
 #define	SYSCTL_NODE_CHILDREN(parent, name) \
-	sysctl_##parent##_##name##_children
+	sysctl__##parent##_##name.oid_children
 
 /*
  * These macros provide type safety for sysctls.  SYSCTL_ALLOWED_TYPES()
@@ -275,36 +279,55 @@ SYSCTL_ALLOWED_TYPES(UINT64, uint64_t *a; unsigned long long *b; );
 #define	__DESCR(d) ""
 #endif
 
-/* This constructs a "raw" MIB oid. */
-#define	SYSCTL_OID(parent, nbr, name, kind, a1, a2, handler, fmt, descr)\
-	static struct sysctl_oid sysctl__##parent##_##name = {		\
-		&sysctl_##parent##_children,				\
-		{ NULL },						\
-		nbr,							\
-		kind,							\
-		a1,							\
-		a2,							\
-		#name,							\
-		handler,						\
-		fmt,							\
-		0,							\
-		0,							\
-		__DESCR(descr)						\
-		};							\
-	DATA_SET(sysctl_set, sysctl__##parent##_##name)
+/* This macro is only for internal use */
+#define	SYSCTL_OID_RAW(id, parent_child_head, nbr, name, kind, a1, a2, handler, fmt, descr) \
+	struct sysctl_oid id = {					\
+		.oid_parent = (parent_child_head),			\
+		.oid_children = SLIST_HEAD_INITIALIZER(&id.oid_children), \
+		.oid_number = (nbr),					\
+		.oid_kind = (kind),					\
+		.oid_arg1 = (a1),					\
+		.oid_arg2 = (a2),					\
+		.oid_name = (name),					\
+		.oid_handler = (handler),				\
+		.oid_fmt = (fmt),					\
+		.oid_descr = __DESCR(descr)				\
+	};								\
+	DATA_SET(sysctl_set, id)
+
+/* This constructs a static "raw" MIB oid. */
+#define	SYSCTL_OID(parent, nbr, name, kind, a1, a2, handler, fmt, descr) \
+    static SYSCTL_OID_RAW(sysctl__##parent##_##name, \
+	SYSCTL_CHILDREN(&sysctl__##parent), \
+	nbr, #name, kind, a1, a2, handler, fmt, descr)
+
+/* This constructs a global "raw" MIB oid. */
+#define	SYSCTL_OID_GLOBAL(parent, nbr, name, kind, a1, a2, handler, fmt, descr) \
+    SYSCTL_OID_RAW(sysctl__##parent##_##name, \
+	SYSCTL_CHILDREN(&sysctl__##parent),	\
+	nbr, #name, kind, a1, a2, handler, fmt, descr)
 
 #define	SYSCTL_ADD_OID(ctx, parent, nbr, name, kind, a1, a2, handler, fmt, descr) \
 	sysctl_add_oid(ctx, parent, nbr, name, kind, a1, a2, handler, fmt, __DESCR(descr))
 
+/* This constructs a root node from which other nodes can hang. */
+#define	SYSCTL_ROOT_NODE(nbr, name, access, handler, descr)	\
+	SYSCTL_OID_RAW(sysctl___##name, &sysctl__children,	\
+		nbr, #name, CTLTYPE_NODE|(access), NULL, 0,	\
+		handler, "N", descr)
+
 /* This constructs a node from which other oids can hang. */
 #define	SYSCTL_NODE(parent, nbr, name, access, handler, descr)		    \
-	struct sysctl_oid_list SYSCTL_NODE_CHILDREN(parent, name);	    \
-	SYSCTL_OID(parent, nbr, name, CTLTYPE_NODE|(access),		    \
-	    (void*)&SYSCTL_NODE_CHILDREN(parent, name), 0, handler, "N", descr)
+	SYSCTL_OID_GLOBAL(parent, nbr, name, CTLTYPE_NODE|(access),	    \
+		NULL, 0, handler, "N", descr)
 
 #define	SYSCTL_ADD_NODE(ctx, parent, nbr, name, access, handler, descr)	    \
 	sysctl_add_oid(ctx, parent, nbr, name, CTLTYPE_NODE|(access),	    \
 	NULL, 0, handler, "N", __DESCR(descr))
+
+#define	SYSCTL_ADD_ROOT_NODE(ctx, nbr, name, access, handler, descr)	\
+	sysctl_add_oid(ctx, &sysctl__children, nbr, name,		\
+        CTLTYPE_NODE|(access), NULL, 0, handler, "N", __DESCR(descr))
 
 /* Oid for a string.  len can be 0 to indicate '\0' termination. */
 #define	SYSCTL_STRING(parent, nbr, name, access, arg, len, descr) \
@@ -481,7 +504,6 @@ SYSCTL_ALLOWED_TYPES(UINT64, uint64_t *a; unsigned long long *b; );
 #define	CTL_MACHDEP	7		/* machine dependent */
 #define	CTL_USER	8		/* user-level */
 #define	CTL_P1003_1B	9		/* POSIX 1003.1B */
-#define	CTL_MAXID	10		/* number of valid top-level ids */
 
 /*
  * CTL_KERN identifiers
@@ -523,7 +545,6 @@ SYSCTL_ALLOWED_TYPES(UINT64, uint64_t *a; unsigned long long *b; );
 #define	KERN_IOV_MAX		35	/* int: value of UIO_MAXIOV */
 #define	KERN_HOSTUUID		36	/* string: host UUID identifier */
 #define	KERN_ARND		37	/* int: from arc4rand() */
-#define	KERN_MAXID		38	/* number of valid kern ids */
 /*
  * KERN_PROC subtypes
  */
@@ -585,7 +606,6 @@ SYSCTL_ALLOWED_TYPES(UINT64, uint64_t *a; unsigned long long *b; );
 #define	HW_FLOATINGPT	10		/* int: has HW floating point? */
 #define	HW_MACHINE_ARCH	11		/* string: machine architecture */
 #define	HW_REALMEM	12		/* int: 'real' memory */
-#define	HW_MAXID	13		/* number of valid hw ids */
 
 /*
  * CTL_USER definitions
@@ -610,7 +630,6 @@ SYSCTL_ALLOWED_TYPES(UINT64, uint64_t *a; unsigned long long *b; );
 #define	USER_POSIX2_UPE		18	/* int: POSIX2_UPE */
 #define	USER_STREAM_MAX		19	/* int: POSIX2_STREAM_MAX */
 #define	USER_TZNAME_MAX		20	/* int: POSIX2_TZNAME_MAX */
-#define	USER_MAXID		21	/* number of valid user ids */
 
 #define	CTL_P1003_1B_ASYNCHRONOUS_IO		1	/* boolean */
 #define	CTL_P1003_1B_MAPPED_FILES		2	/* boolean */
