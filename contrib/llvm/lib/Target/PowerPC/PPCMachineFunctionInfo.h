@@ -32,6 +32,9 @@ class PPCFunctionInfo : public MachineFunctionInfo {
   ///
   int ReturnAddrSaveIndex;
 
+  /// Frame index where the old base pointer is stored.
+  int BasePointerSaveIndex;
+
   /// MustSaveLR - Indicates whether LR is defined (or clobbered) in the current
   /// function.  This is only valid after the initial scan of the function by
   /// PEI.
@@ -89,10 +92,17 @@ class PPCFunctionInfo : public MachineFunctionInfo {
   /// 64-bit SVR4 ABI.
   SmallVector<unsigned, 3> MustSaveCRs;
 
+  /// Hold onto our MachineFunction context.
+  MachineFunction &MF;
+
+  /// Whether this uses the PIC Base register or not.
+  bool UsesPICBase;
+
 public:
   explicit PPCFunctionInfo(MachineFunction &MF) 
     : FramePointerSaveIndex(0),
       ReturnAddrSaveIndex(0),
+      BasePointerSaveIndex(0),
       HasSpills(false),
       HasNonRISpills(false),
       SpillsCR(false),
@@ -105,13 +115,18 @@ public:
       VarArgsStackOffset(0),
       VarArgsNumGPR(0),
       VarArgsNumFPR(0),
-      CRSpillFrameIndex(0) {}
+      CRSpillFrameIndex(0),
+      MF(MF),
+      UsesPICBase(0) {}
 
   int getFramePointerSaveIndex() const { return FramePointerSaveIndex; }
   void setFramePointerSaveIndex(int Idx) { FramePointerSaveIndex = Idx; }
   
   int getReturnAddrSaveIndex() const { return ReturnAddrSaveIndex; }
   void setReturnAddrSaveIndex(int idx) { ReturnAddrSaveIndex = idx; }
+
+  int getBasePointerSaveIndex() const { return BasePointerSaveIndex; }
+  void setBasePointerSaveIndex(int Idx) { BasePointerSaveIndex = Idx; }
 
   unsigned getMinReservedArea() const { return MinReservedArea; }
   void setMinReservedArea(unsigned size) { MinReservedArea = size; }
@@ -160,9 +175,14 @@ public:
   int getCRSpillFrameIndex() const { return CRSpillFrameIndex; }
   void setCRSpillFrameIndex(int idx) { CRSpillFrameIndex = idx; }
 
-  const SmallVector<unsigned, 3> &
+  const SmallVectorImpl<unsigned> &
     getMustSaveCRs() const { return MustSaveCRs; }
   void addMustSaveCR(unsigned Reg) { MustSaveCRs.push_back(Reg); }
+
+  void setUsesPICBase(bool uses) { UsesPICBase = uses; }
+  bool usesPICBase() const { return UsesPICBase; }
+
+  MCSymbol *getPICOffsetSymbol() const;
 };
 
 } // end of namespace llvm

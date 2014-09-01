@@ -23,7 +23,8 @@
  */
 
 static int dtrace_verbose_ioctl;
-SYSCTL_INT(_debug_dtrace, OID_AUTO, verbose_ioctl, CTLFLAG_RW, &dtrace_verbose_ioctl, 0, "");
+SYSCTL_INT(_debug_dtrace, OID_AUTO, verbose_ioctl, CTLFLAG_RW,
+    &dtrace_verbose_ioctl, 0, "log DTrace ioctls");
 
 #define DTRACE_IOCTL_PRINTF(fmt, ...)	if (dtrace_verbose_ioctl) printf(fmt, ## __VA_ARGS__ )
 
@@ -77,12 +78,9 @@ static int
 dtrace_ioctl(struct cdev *dev, u_long cmd, caddr_t addr,
     int flags __unused, struct thread *td)
 {
-#if __FreeBSD_version < 800039
-	dtrace_state_t *state = dev->si_drv1;
-#else
 	dtrace_state_t *state;
 	devfs_get_cdevpriv((void **) &state);
-#endif
+
 	int error = 0;
 	if (state == NULL)
 		return (EINVAL);

@@ -52,8 +52,7 @@ int snd_unit = -1;
 TUNABLE_INT("hw.snd.default_unit", &snd_unit);
 
 static int snd_unit_auto = -1;
-TUNABLE_INT("hw.snd.default_auto", &snd_unit_auto);
-SYSCTL_INT(_hw_snd, OID_AUTO, default_auto, CTLFLAG_RW,
+SYSCTL_INT(_hw_snd, OID_AUTO, default_auto, CTLFLAG_RWTUN,
     &snd_unit_auto, 0, "assign default unit to a newly attached device");
 
 int snd_maxautovchans = 16;
@@ -448,8 +447,10 @@ sysctl_hw_snd_default_unit(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 /* XXX: do we need a way to let the user change the default unit? */
-SYSCTL_PROC(_hw_snd, OID_AUTO, default_unit, CTLTYPE_INT | CTLFLAG_RW,
-            0, sizeof(int), sysctl_hw_snd_default_unit, "I", "default sound device");
+SYSCTL_PROC(_hw_snd, OID_AUTO, default_unit,
+	    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY,
+	    0, sizeof(int), sysctl_hw_snd_default_unit, "I",
+	    "default sound device");
 
 static int
 sysctl_hw_snd_maxautovchans(SYSCTL_HANDLER_ARGS)

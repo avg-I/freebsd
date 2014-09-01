@@ -2,6 +2,7 @@
 # $FreeBSD$
 
 .include <bsd.init.mk>
+.include <bsd.compiler.mk>
 
 .SUFFIXES: .out .o .c .cc .cpp .cxx .C .m .y .l .ln .s .S .asm
 
@@ -146,7 +147,8 @@ MAN1=	${MAN}
 .endif
 .endif # defined(PROG)
 
-all: objwarn ${PROG} ${SCRIPTS}
+all: beforebuild .WAIT ${PROG} ${SCRIPTS}
+beforebuild: objwarn
 .if ${MK_MAN} != "no"
 all: _manpages
 .endif
@@ -172,8 +174,8 @@ _EXTRADEPEND:
 .endif
 .else
 	echo ${PROG}: ${LIBC} ${DPADD} >> ${DEPENDFILE}
-.if defined(PROG_CXX) && !defined(EARLY_BUILD)
-.if ${MK_CLANG_IS_CC} != "no" && empty(CXXFLAGS:M-stdlib=libstdc++)
+.if defined(PROG_CXX)
+.if ${COMPILER_TYPE} == "clang" && empty(CXXFLAGS:M-stdlib=libstdc++)
 	echo ${PROG}: ${LIBCPLUSPLUS} >> ${DEPENDFILE}
 .else
 	echo ${PROG}: ${LIBSTDCPLUSPLUS} >> ${DEPENDFILE}
@@ -275,7 +277,3 @@ ${OBJS}: ${SRCS:M*.h}
 .include <bsd.obj.mk>
 
 .include <bsd.sys.mk>
-
-.if defined(PORTNAME)
-.include <bsd.pkg.mk>
-.endif

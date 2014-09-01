@@ -57,16 +57,12 @@ __FBSDID("$FreeBSD$");
 static SYSCTL_NODE(_hw, OID_AUTO, cardbus, CTLFLAG_RD, 0, "CardBus parameters");
 
 int    cardbus_debug = 0;
-TUNABLE_INT("hw.cardbus.debug", &cardbus_debug);
-SYSCTL_INT(_hw_cardbus, OID_AUTO, debug, CTLFLAG_RW,
-    &cardbus_debug, 0,
-  "CardBus debug");
+SYSCTL_INT(_hw_cardbus, OID_AUTO, debug, CTLFLAG_RWTUN,
+    &cardbus_debug, 0, "CardBus debug");
 
 int    cardbus_cis_debug = 0;
-TUNABLE_INT("hw.cardbus.cis_debug", &cardbus_cis_debug);
-SYSCTL_INT(_hw_cardbus, OID_AUTO, cis_debug, CTLFLAG_RW,
-    &cardbus_cis_debug, 0,
-  "CardBus CIS debug");
+SYSCTL_INT(_hw_cardbus, OID_AUTO, cis_debug, CTLFLAG_RWTUN,
+    &cardbus_cis_debug, 0, "CardBus CIS debug");
 
 #define	DPRINTF(a) if (cardbus_debug) printf a
 #define	DEVPRINTF(x) if (cardbus_debug) device_printf x
@@ -96,17 +92,36 @@ static int
 cardbus_attach(device_t cbdev)
 {
 	struct cardbus_softc *sc;
+#ifdef PCI_RES_BUS
+	int rid;
+#endif
 
 	sc = device_get_softc(cbdev);
 	sc->sc_dev = cbdev;
+#ifdef PCI_RES_BUS
+	rid = 0;
+	sc->sc_bus = bus_alloc_resource(cbdev, PCI_RES_BUS, &rid,
+	    pcib_get_bus(cbdev), pcib_get_bus(cbdev), 1, 0);
+	if (sc->sc_bus == NULL) {
+		device_printf(cbdev, "failed to allocate bus number\n");
+		return (ENXIO);
+	}
+#endif
 	return (0);
 }
 
 static int
 cardbus_detach(device_t cbdev)
 {
+#ifdef PCI_RES_BUS
+	struct cardbus_softc *sc;
+#endif
 
 	cardbus_detach_card(cbdev);
+#ifdef PCI_RES_BUS
+	sc = device_get_softc(cbdev);
+	(void)bus_release_resource(cbdev, PCI_RES_BUS, 0, sc->sc_bus);
+#endif
 	return (0);
 }
 
