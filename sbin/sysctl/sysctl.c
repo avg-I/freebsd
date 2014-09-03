@@ -848,9 +848,10 @@ show_var(int *oid, int nlen)
 		warnx("malloc failed");
 		return (1);
 	}
+	ctltype = (kind & CTLTYPE);
 	len = j;
 	i = sysctl(oid, nlen, val, &len, 0, 0);
-	if (i || !len) {
+	if (i != 0 || (len == 0 && ctltype != CTLTYPE_STRING)) {
 		free(oval);
 		return (1);
 	}
@@ -862,7 +863,6 @@ show_var(int *oid, int nlen)
 	}
 	val[len] = '\0';
 	p = val;
-	ctltype = (kind & CTLTYPE);
 	sign = ctl_sign[ctltype];
 	intlen = ctl_size[ctltype];
 

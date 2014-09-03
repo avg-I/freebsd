@@ -1,6 +1,6 @@
 # $FreeBSD$
 
-.include <bsd.own.mk>
+.include <src.opts.mk>
 MK_SSP=		no
 
 PROG?=		ld-elf.so.1
@@ -77,6 +77,10 @@ beforeinstall:
 .endif
 
 .PATH: ${.CURDIR}/${RTLD_ARCH}
+
+.if ${MK_TESTS} != "no"
+SUBDIR+=	tests
+.endif
 
 .include <bsd.symver.mk>
 .include <bsd.prog.mk>

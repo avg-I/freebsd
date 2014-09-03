@@ -97,6 +97,7 @@ __FBSDID("$FreeBSD$");
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
+#include <dev/pci/pcib_private.h>
 
 #include <dev/pccard/pccardreg.h>
 #include <dev/pccard/pccardvar.h>
@@ -133,26 +134,22 @@ static SYSCTL_NODE(_hw, OID_AUTO, cbb, CTLFLAG_RD, 0, "CBB parameters");
 
 /* There's no way to say TUNEABLE_LONG to get the right types */
 u_long cbb_start_mem = CBB_START_MEM;
-TUNABLE_ULONG("hw.cbb.start_memory", &cbb_start_mem);
-SYSCTL_ULONG(_hw_cbb, OID_AUTO, start_memory, CTLFLAG_RW,
+SYSCTL_ULONG(_hw_cbb, OID_AUTO, start_memory, CTLFLAG_RWTUN,
     &cbb_start_mem, CBB_START_MEM,
     "Starting address for memory allocations");
 
 u_long cbb_start_16_io = CBB_START_16_IO;
-TUNABLE_ULONG("hw.cbb.start_16_io", &cbb_start_16_io);
-SYSCTL_ULONG(_hw_cbb, OID_AUTO, start_16_io, CTLFLAG_RW,
+SYSCTL_ULONG(_hw_cbb, OID_AUTO, start_16_io, CTLFLAG_RWTUN,
     &cbb_start_16_io, CBB_START_16_IO,
     "Starting ioport for 16-bit cards");
 
 u_long cbb_start_32_io = CBB_START_32_IO;
-TUNABLE_ULONG("hw.cbb.start_32_io", &cbb_start_32_io);
-SYSCTL_ULONG(_hw_cbb, OID_AUTO, start_32_io, CTLFLAG_RW,
+SYSCTL_ULONG(_hw_cbb, OID_AUTO, start_32_io, CTLFLAG_RWTUN,
     &cbb_start_32_io, CBB_START_32_IO,
     "Starting ioport for 32-bit cards");
 
 int cbb_debug = 0;
-TUNABLE_INT("hw.cbb.debug", &cbb_debug);
-SYSCTL_INT(_hw_cbb, OID_AUTO, debug, CTLFLAG_RW, &cbb_debug, 0,
+SYSCTL_INT(_hw_cbb, OID_AUTO, debug, CTLFLAG_RWTUN, &cbb_debug, 0,
     "Verbose cardbus bridge debugging");
 
 static void	cbb_insert(struct cbb_softc *sc);
@@ -1548,7 +1545,7 @@ cbb_read_ivar(device_t brdev, device_t child, int which, uintptr_t *result)
 		*result = sc->domain;
 		return (0);
 	case PCIB_IVAR_BUS:
-		*result = sc->secbus;
+		*result = sc->bus.sec;
 		return (0);
 	}
 	return (ENOENT);
@@ -1557,14 +1554,12 @@ cbb_read_ivar(device_t brdev, device_t child, int which, uintptr_t *result)
 int
 cbb_write_ivar(device_t brdev, device_t child, int which, uintptr_t value)
 {
-	struct cbb_softc *sc = device_get_softc(brdev);
 
 	switch (which) {
 	case PCIB_IVAR_DOMAIN:
 		return (EINVAL);
 	case PCIB_IVAR_BUS:
-		sc->secbus = value;
-		return (0);
+		return (EINVAL);
 	}
 	return (ENOENT);
 }

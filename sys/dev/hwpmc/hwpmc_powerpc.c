@@ -32,6 +32,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/pmc.h>
 #include <sys/pmckern.h>
+#include <sys/sysent.h>
 #include <sys/systm.h>
 
 #include <machine/pmc_mdep.h>
@@ -54,16 +55,22 @@ int
 pmc_save_kernel_callchain(uintptr_t *cc, int maxsamples,
     struct trapframe *tf)
 {
+	uintptr_t *osp, *sp;
 	int frames = 0;
-	uintptr_t *sp;
 
 	cc[frames++] = PMC_TRAPFRAME_TO_PC(tf);
 	sp = (uintptr_t *)PMC_TRAPFRAME_TO_FP(tf);
+	osp = NULL;
 
-	for (frames = 1; frames < maxsamples; frames++) {
-		if (!INKERNEL(sp))
+	for (; frames < maxsamples; frames++) {
+		if (!INKERNEL(sp) || sp <= osp)
 			break;
-		cc[frames++] = sp[1];
+#ifdef __powerpc64__
+		cc[frames] = sp[2];
+#else
+		cc[frames] = sp[1];
+#endif
+		osp = sp;
 		sp = (uintptr_t *)*sp;
 	}
 	return (frames);
@@ -72,12 +79,14 @@ pmc_save_kernel_callchain(uintptr_t *cc, int maxsamples,
 static int
 powerpc_switch_in(struct pmc_cpu *pc, struct pmc_process *pp)
 {
+
 	return (0);
 }
 
 static int
 powerpc_switch_out(struct pmc_cpu *pc, struct pmc_process *pp)
 {
+
 	return (0);
 }
 
@@ -111,6 +120,7 @@ powerpc_describe(int cpu, int ri, struct pmc_info *pi, struct pmc **ppmc)
 int
 powerpc_get_config(int cpu, int ri, struct pmc **ppm)
 {
+
 	*ppm = powerpc_pcpu[cpu]->pc_ppcpmcs[ri].phw_pmc;
 
 	return (0);
@@ -176,17 +186,31 @@ int
 pmc_save_user_callchain(uintptr_t *cc, int maxsamples,
     struct trapframe *tf)
 {
-	uintptr_t *sp;
+	uintptr_t *osp, *sp;
 	int frames = 0;
 
 	cc[frames++] = PMC_TRAPFRAME_TO_PC(tf);
 	sp = (uintptr_t *)PMC_TRAPFRAME_TO_FP(tf);
+	osp = NULL;
 
-	for (frames = 1; frames < maxsamples; frames++) {
-		if (!INUSER(sp))
+	for (; frames < maxsamples; frames++) {
+		if (!INUSER(sp) || sp <= osp)
 			break;
-		cc[frames++] = fuword(sp + 1);
-		sp = (uintptr_t *)fuword(sp);
+		osp = sp;
+#ifdef __powerpc64__
+		/* Check if 32-bit mode. */
+		if (!(tf->srr1 & PSL_SF)) {
+			cc[frames] = fuword32((uint32_t *)sp + 1);
+			sp = (uintptr_t *)(uintptr_t)fuword32(sp);
+		} else {
+			cc[frames] = fuword(sp + 2);
+			sp = (uintptr_t *)fuword(sp);
+		}
+#else
+		cc[frames] = fuword32((uint32_t *)sp + 1);
+		sp = (uintptr_t *)fuword32(sp);
+#endif
 	}
+
 	return (frames);
 }

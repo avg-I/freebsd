@@ -244,9 +244,6 @@ struct ipsecstat {
 /*
  * Definitions for IPsec & Key sysctl operations.
  */
-/*
- * Names for IPsec & Key sysctl objects
- */
 #define IPSECCTL_STATS			1	/* stats */
 #define IPSECCTL_DEF_POLICY		2
 #define IPSECCTL_DEF_ESP_TRANSLEV	3	/* int; ESP transport mode */
@@ -262,7 +259,6 @@ struct ipsecstat {
 #define	IPSECCTL_ECN			11
 #define	IPSECCTL_DEBUG			12
 #define	IPSECCTL_ESP_RANDPAD		13
-#define IPSECCTL_MAXID			14
 
 #ifdef _KERNEL
 #include <sys/counter.h>
@@ -358,11 +354,11 @@ extern const char *ipsec_logsastr __P((struct secasvar *));
 extern void ipsec_dumpmbuf __P((struct mbuf *));
 
 struct m_tag;
-extern void ah4_input(struct mbuf *m, int off);
+extern int ah4_input(struct mbuf **mp, int *offp, int proto);
 extern void ah4_ctlinput(int cmd, struct sockaddr *sa, void *);
-extern void esp4_input(struct mbuf *m, int off);
+extern int esp4_input(struct mbuf **mp, int *offp, int proto);
 extern void esp4_ctlinput(int cmd, struct sockaddr *sa, void *);
-extern void ipcomp4_input(struct mbuf *m, int off);
+extern int ipcomp4_input(struct mbuf **mp, int *offp, int proto);
 extern int ipsec4_common_input(struct mbuf *m, ...);
 extern int ipsec4_common_input_cb(struct mbuf *m, struct secasvar *sav,
 			int skip, int protoff, struct m_tag *mt);
