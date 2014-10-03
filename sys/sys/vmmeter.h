@@ -190,6 +190,14 @@ vm_paging_needed(void)
         vm_pageout_wakeup_thresh);
 }
 
+static __inline
+int
+vm_paging_needed_deficit(int deficit)
+{
+    return (vm_cnt.v_free_count + vm_cnt.v_cache_count <
+        vm_pageout_wakeup_thresh + deficit);
+}
+
 #endif
 
 /* systemwide totals computed every five seconds */

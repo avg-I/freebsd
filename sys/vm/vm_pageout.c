@@ -910,16 +910,24 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	int lockmode;
 	boolean_t queues_locked;
 
+	if (pass > 0)
+		deficit = atomic_readandclear_int(&vm_pageout_deficit);
+
 	/*
 	 * If we need to reclaim memory ask kernel caches to return some.
 	 */
 	if (vmd == &vm_dom[0] && pass > 0) {
+		/* Trim UMA zone caches to their workset sizes. */
+		uma_reclaim();
+
+		/* If that was sufficient, then just return. */
+		if (!vm_paging_needed_deficit(deficit))
+			return;
+
 		/* Ask various kernel memory caches to free memory. */
 		EVENTHANDLER_INVOKE(vm_lowmem, 0);
-		/*
-		 * We do this explicitly after the caches have been
-		 * drained above.
-		 */
+
+		/* Drain UMA caches again. */
 		uma_reclaim();
 	}
 
@@ -935,12 +943,10 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	 * Calculate the number of pages we want to either free or move
 	 * to the cache.
 	 */
-	if (pass > 0) {
-		deficit = atomic_readandclear_int(&vm_pageout_deficit);
+	if (pass > 0)
 		page_shortage = vm_paging_target() + deficit;
-	} else
+	else
 		page_shortage = deficit = 0;
-
 	/*
 	 * maxlaunder limits the number of dirty pages we flush per scan.
 	 * For most systems a smaller value (16 or 32) is more robust under
