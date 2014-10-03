@@ -164,7 +164,6 @@ static int vm_pageout_update_period;
 static int defer_swap_pageouts;
 static int disable_swap_pageouts;
 static int lowmem_period = 10;
-static int lowmem_ticks;
 
 #if defined(NO_SWAPPING)
 static int vm_swap_enabled = 0;
@@ -912,21 +911,16 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	boolean_t queues_locked;
 
 	/*
-	 * If we need to reclaim memory ask kernel caches to return
-	 * some.  We rate limit to avoid thrashing.
+	 * If we need to reclaim memory ask kernel caches to return some.
 	 */
-	if (vmd == &vm_dom[0] && pass > 0 &&
-	    lowmem_ticks + (lowmem_period * hz) < ticks) {
-		/*
-		 * Decrease registered cache sizes.
-		 */
+	if (vmd == &vm_dom[0] && pass > 0) {
+		/* Ask various kernel memory caches to free memory. */
 		EVENTHANDLER_INVOKE(vm_lowmem, 0);
 		/*
 		 * We do this explicitly after the caches have been
 		 * drained above.
 		 */
 		uma_reclaim();
-		lowmem_ticks = ticks;
 	}
 
 	/*
