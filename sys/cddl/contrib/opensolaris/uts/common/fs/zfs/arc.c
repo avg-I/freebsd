@@ -2473,19 +2473,11 @@ arc_shrink(void)
 	}
 }
 
-static int needfree = 0;
-
 static int
 arc_reclaim_needed(void)
 {
 
 #ifdef _KERNEL
-
-	if (needfree) {
-		DTRACE_PROBE(arc__reclaim_needfree);
-		return (1);
-	}
-
 	if (kmem_free_count() < zfs_arc_free_target) {
 		DTRACE_PROBE2(arc__reclaim_freetarget, uint64_t,
 		    kmem_free_count(), uint64_t, zfs_arc_free_target);
@@ -2638,15 +2630,6 @@ arc_reclaim_thread(void *dummy __unused)
 			/* reset the growth delay for every reclaim */
 			growtime = ddi_get_lbolt() + (arc_grow_retry * hz);
 
-			if (needfree && last_reclaim == ARC_RECLAIM_CONS) {
-				/*
-				 * If needfree is TRUE our vm_lowmem hook
-				 * was called and in that case we must free some
-				 * memory, so switch to aggressive mode.
-				 */
-				arc_no_grow = TRUE;
-				last_reclaim = ARC_RECLAIM_AGGR;
-			}
 			arc_kmem_reap_now(last_reclaim);
 			arc_warm = B_TRUE;
 
@@ -2658,13 +2641,6 @@ arc_reclaim_thread(void *dummy __unused)
 
 		if (arc_eviction_list != NULL)
 			arc_do_user_evicts();
-
-#ifdef _KERNEL
-		if (needfree) {
-			needfree = 0;
-			wakeup(&needfree);
-		}
-#endif
 
 		/* block until needed, or one second, whichever is shorter */
 		CALLB_CPR_SAFE_BEGIN(&cpr);
@@ -4034,23 +4010,7 @@ static void
 arc_lowmem(void *arg __unused, int howto __unused)
 {
 
-	/* Serialize access via arc_lowmem_lock. */
-	mutex_enter(&arc_lowmem_lock);
-	mutex_enter(&arc_reclaim_thr_lock);
-	needfree = 1;
 	cv_signal(&arc_reclaim_thr_cv);
-
-	/*
-	 * It is unsafe to block here in arbitrary threads, because we can come
-	 * here from ARC itself and may hold ARC locks and thus risk a deadlock
-	 * with ARC reclaim thread.
-	 */
-	if (curproc == pageproc) {
-		while (needfree)
-			msleep(&needfree, &arc_reclaim_thr_lock, 0, "zfs:lowmem", 0);
-	}
-	mutex_exit(&arc_reclaim_thr_lock);
-	mutex_exit(&arc_lowmem_lock);
 }
 #endif
 
