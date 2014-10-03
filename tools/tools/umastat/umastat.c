@@ -134,7 +134,6 @@ static const struct flaginfo {
 	{ UMA_ZONE_SECONDARY, "secondary" },
 	{ UMA_ZONE_REFCNT, "refcnt" },
 	{ UMA_ZONE_MAXBUCKET, "maxbucket" },
-	{ UMA_ZONE_CACHESPREAD, "cachespread" },
 	{ UMA_ZONE_VTOSLAB, "vtoslab" },
 	{ UMA_ZONE_NODUMP, "nodump" },
 	{ UMA_ZONE_PCPU, "pcpu" },

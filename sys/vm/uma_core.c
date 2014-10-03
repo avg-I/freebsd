@@ -1382,41 +1382,6 @@ keg_large_init(uma_keg_t keg)
 		keg->uk_flags |= UMA_ZONE_HASH;
 }
 
-static void
-keg_cachespread_init(uma_keg_t keg)
-{
-	int alignsize;
-	int trailer;
-	int pages;
-	int rsize;
-
-	KASSERT((keg->uk_flags & UMA_ZONE_PCPU) == 0,
-	    ("%s: Cannot cachespread-init a UMA_ZONE_PCPU keg", __func__));
-
-	alignsize = keg->uk_align + 1;
-	rsize = keg->uk_size;
-	/*
-	 * We want one item to start on every align boundary in a page.  To
-	 * do this we will span pages.  We will also extend the item by the
-	 * size of align if it is an even multiple of align.  Otherwise, it
-	 * would fall on the same boundary every time.
-	 */
-	if (rsize & keg->uk_align)
-		rsize = (rsize & ~keg->uk_align) + alignsize;
-	if ((rsize & alignsize) == 0)
-		rsize += alignsize;
-	trailer = rsize - keg->uk_size;
-	pages = (rsize * (PAGE_SIZE / alignsize)) / PAGE_SIZE;
-	pages = MIN(pages, (128 * 1024) / PAGE_SIZE);
-	keg->uk_rsize = rsize;
-	keg->uk_ppera = pages;
-	keg->uk_ipers = ((pages * PAGE_SIZE) + trailer) / rsize;
-	keg->uk_flags |= UMA_ZONE_OFFPAGE | UMA_ZONE_VTOSLAB;
-	KASSERT(keg->uk_ipers <= SLAB_SETSIZE,
-	    ("%s: keg->uk_ipers too high(%d) increase max_ipers", __func__,
-	    keg->uk_ipers));
-}
-
 /*
  * Keg header ctor.  This initializes all fields, locks, etc.  And inserts
  * the keg onto the global keg list.
@@ -1466,9 +1431,7 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 		keg->uk_flags &= ~UMA_ZONE_PCPU;
 #endif
 
-	if (keg->uk_flags & UMA_ZONE_CACHESPREAD) {
-		keg_cachespread_init(keg);
-	} else if (keg->uk_flags & UMA_ZONE_REFCNT) {
+	if (keg->uk_flags & UMA_ZONE_REFCNT) {
 		if (keg->uk_size >
 		    (UMA_SLAB_SIZE - sizeof(struct uma_slab_refcnt) -
 		    sizeof(uint32_t)))

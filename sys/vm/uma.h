@@ -253,12 +253,6 @@ uma_zone_t uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 #define	UMA_ZONE_SECONDARY	0x0200	/* Zone is a Secondary Zone */
 #define	UMA_ZONE_REFCNT		0x0400	/* Allocate refcnts in slabs */
 #define	UMA_ZONE_MAXBUCKET	0x0800	/* Use largest buckets */
-#define	UMA_ZONE_CACHESPREAD	0x1000	/*
-					 * Spread memory start locations across
-					 * all possible cache lines.  May
-					 * require many virtually contiguous
-					 * backend pages and can fail early.
-					 */
 #define	UMA_ZONE_VTOSLAB	0x2000	/* Zone uses vtoslab for lookup. */
 #define	UMA_ZONE_NODUMP		0x4000	/*
 					 * Zone's pages will not be included in
