@@ -161,7 +161,7 @@ static const u_int uma_max_ipers_ref = PAGE_SIZE / MCLBYTES;
  * outside of the allocation fast path.
  */
 static struct callout uma_callout;
-#define	UMA_TIMEOUT	20		/* Seconds for callout interval. */
+#define	UMA_TIMEOUT	10		/* Seconds for callout interval. */
 
 /*
  * This structure is passed as the zone ctor arg so that I don't have to create
