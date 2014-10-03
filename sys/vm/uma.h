@@ -215,17 +215,6 @@ uma_zone_t uma_zsecond_create(char *name, uma_ctor ctor, uma_dtor dtor,
 		    uma_init zinit, uma_fini zfini, uma_zone_t master);
 
 /*
- * Add a second master to a secondary zone.  This provides multiple data
- * backends for objects with the same size.  Both masters must have
- * compatible allocation flags.  Presently, UMA_ZONE_MALLOC type zones are
- * the only supported.
- *
- * Returns:
- *	Error on failure, 0 on success.
- */
-int uma_zsecond_add(uma_zone_t zone, uma_zone_t master);
-
-/*
  * Create cache-only zones.
  *
  * This allows uma's per-cpu cache facilities to handle arbitrary

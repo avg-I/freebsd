@@ -260,12 +260,6 @@ typedef struct uma_slab * uma_slab_t;
 typedef struct uma_slab_refcnt * uma_slabrefcnt_t;
 typedef uma_slab_t (*uma_slaballoc)(uma_zone_t, uma_keg_t, int);
 
-struct uma_klink {
-	LIST_ENTRY(uma_klink)	kl_link;
-	uma_keg_t		kl_keg;
-};
-typedef struct uma_klink *uma_klink_t;
-
 /*
  * Zone management structure 
  *
@@ -276,6 +270,7 @@ struct uma_zone {
 	struct mtx_padalign	uz_lock;	/* Lock for the zone */
 	struct mtx_padalign	*uz_lockptr;
 	const char		*uz_name;	/* Text name of the zone */
+	uma_keg_t		uz_keg;		/* Backing keg. */
 
 	LIST_ENTRY(uma_zone)	uz_link;	/* List of all zones in keg */
 	LIST_HEAD(,uma_bucket)	uz_buckets;	/* full buckets */
@@ -283,10 +278,6 @@ struct uma_zone {
 	int		uz_prev_cache_size;
 	int		uz_prev_prev_cache_size;
 
-	LIST_HEAD(,uma_klink)	uz_kegs;	/* List of kegs. */
-	struct uma_klink	uz_klink;	/* klink for first keg. */
-
-	uma_slaballoc	uz_slab;	/* Allocate a slab from the backend. */
 	uma_ctor	uz_ctor;	/* Constructor for each allocation */
 	uma_dtor	uz_dtor;	/* Destructor */
 	uma_init	uz_init;	/* Initializer for each item */
@@ -319,7 +310,6 @@ struct uma_zone {
 /*
  * These flags must not overlap with the UMA_ZONE flags specified in uma.h.
  */
-#define	UMA_ZFLAG_MULTI		0x04000000	/* Multiple kegs in the zone. */
 #define	UMA_ZFLAG_DRAINING	0x08000000	/* Running zone_drain. */
 #define	UMA_ZFLAG_BUCKET	0x10000000	/* Bucket zone. */
 #define UMA_ZFLAG_INTERNAL	0x20000000	/* No offpage no PCPU. */
@@ -328,15 +318,6 @@ struct uma_zone {
 
 #define	UMA_ZFLAG_INHERIT						\
     (UMA_ZFLAG_INTERNAL | UMA_ZFLAG_CACHEONLY | UMA_ZFLAG_BUCKET)
-
-static inline uma_keg_t
-zone_first_keg(uma_zone_t zone)
-{
-	uma_klink_t klink;
-
-	klink = LIST_FIRST(&zone->uz_kegs);
-	return (klink != NULL) ? klink->kl_keg : NULL;
-}
 
 #undef UMA_ALIGN
 

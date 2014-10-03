@@ -117,7 +117,6 @@ static const struct flaginfo {
 	u_int32_t	 fi_flag;
 	const char	*fi_name;
 } flaginfo[] = {
-	{ UMA_ZFLAG_MULTI, "multi" },
 	{ UMA_ZFLAG_DRAINING, "draining" },
 	{ UMA_ZFLAG_BUCKET, "bucket" },
 	{ UMA_ZFLAG_INTERNAL, "internal" },
