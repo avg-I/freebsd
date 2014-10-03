@@ -234,7 +234,7 @@ static void page_free(void *, int, uint8_t);
 static uma_slab_t keg_alloc_slab(uma_keg_t, uma_zone_t, int);
 static void cache_drain(uma_zone_t);
 static void bucket_drain(uma_zone_t, uma_bucket_t);
-static void bucket_cache_drain(uma_zone_t zone);
+static void bucket_cache_drain(uma_zone_t zone, int all);
 static int keg_ctor(void *, int, void *, int);
 static void keg_dtor(void *, int, void *);
 static int zone_ctor(void *, int, void *, int);
@@ -510,8 +510,26 @@ keg_timeout(uma_keg_t keg)
 static void
 zone_timeout(uma_zone_t zone)
 {
+	uma_keg_t keg;
+	int keg_items;
+	int to_drain;
 
 	zone_foreach_keg(zone, &keg_timeout);
+
+	/*
+	 * If more than 12.5% of items in the zone (its first keg) are
+	 * either free or are the in cache buckets, then trim the
+	 * the bucket cache to a working set size estimated based
+	 * on a short history of the bucket cache size.
+	 */
+	keg = zone_first_keg(zone);
+	keg_items = (keg->uk_pages / keg->uk_ppera) * keg->uk_ipers;
+	to_drain = MIN(zone->uz_prev_cache_size, zone->uz_prev_prev_cache_size);
+	to_drain = MIN(zone->uz_cache_size, to_drain);
+	if ((size_t)8 * (keg->uk_free + to_drain) > keg_items)
+		zone_drain(zone);
+	zone->uz_prev_prev_cache_size = zone->uz_prev_cache_size;
+	zone->uz_prev_cache_size = zone->uz_cache_size;
 }
 
 /*
@@ -686,7 +704,7 @@ cache_drain(uma_zone_t zone)
 		cache->uc_allocbucket = cache->uc_freebucket = NULL;
 	}
 	ZONE_LOCK(zone);
-	bucket_cache_drain(zone);
+	bucket_cache_drain(zone, 1);
 	ZONE_UNLOCK(zone);
 }
 
@@ -716,18 +734,20 @@ cache_drain_safe_cpu(uma_zone_t zone)
 	critical_enter();
 	cache = &zone->uz_cpu[curcpu];
 	if (cache->uc_allocbucket) {
-		if (cache->uc_allocbucket->ub_cnt != 0)
+		if (cache->uc_allocbucket->ub_cnt != 0) {
 			LIST_INSERT_HEAD(&zone->uz_buckets,
 			    cache->uc_allocbucket, ub_link);
-		else
+			zone->uz_cache_size += cache->uc_allocbucket->ub_cnt;
+		} else
 			b1 = cache->uc_allocbucket;
 		cache->uc_allocbucket = NULL;
 	}
 	if (cache->uc_freebucket) {
-		if (cache->uc_freebucket->ub_cnt != 0)
+		if (cache->uc_freebucket->ub_cnt != 0) {
 			LIST_INSERT_HEAD(&zone->uz_buckets,
 			    cache->uc_freebucket, ub_link);
-		else
+			zone->uz_cache_size += cache->uc_freebucket->ub_cnt;
+		} else
 			b2 = cache->uc_freebucket;
 		cache->uc_freebucket = NULL;
 	}
@@ -778,21 +798,29 @@ cache_drain_safe(uma_zone_t zone)
  * Drain the cached buckets from a zone.  Expects a locked zone on entry.
  */
 static void
-bucket_cache_drain(uma_zone_t zone)
+bucket_cache_drain(uma_zone_t zone, int all)
 {
 	uma_bucket_t bucket;
+	int to_drain;
 
 	/*
 	 * Drain the bucket queues and free the buckets, we just keep two per
 	 * cpu (alloc/free).
 	 */
-	while ((bucket = LIST_FIRST(&zone->uz_buckets)) != NULL) {
+	to_drain = MIN(zone->uz_prev_cache_size, zone->uz_prev_prev_cache_size);
+	while ((all || to_drain > 0) &&
+	    (bucket = LIST_FIRST(&zone->uz_buckets)) != NULL) {
 		LIST_REMOVE(bucket, ub_link);
+		zone->uz_cache_size -= bucket->ub_cnt;
+		KASSERT(zone->uz_cache_size >= 0, ("negative uz_cache_size"));
+		to_drain -= bucket->ub_cnt;
 		ZONE_UNLOCK(zone);
 		bucket_drain(zone, bucket);
 		bucket_free(zone, bucket, NULL);
 		ZONE_LOCK(zone);
 	}
+
+	KASSERT(!all || zone->uz_cache_size == 0, ("uz_cache_size too large"));
 
 	/*
 	 * Shrink further bucket sizes.  Price of single zone lock collision
@@ -884,7 +912,7 @@ finished:
 }
 
 static void
-zone_drain_wait(uma_zone_t zone, int waitok)
+zone_drain_wait(uma_zone_t zone, int waitok, int all)
 {
 
 	/*
@@ -902,7 +930,7 @@ zone_drain_wait(uma_zone_t zone, int waitok)
 		mtx_lock(&uma_mtx);
 	}
 	zone->uz_flags |= UMA_ZFLAG_DRAINING;
-	bucket_cache_drain(zone);
+	bucket_cache_drain(zone, all);
 	ZONE_UNLOCK(zone);
 	/*
 	 * The DRAINING flag protects us from being freed while
@@ -917,11 +945,18 @@ out:
 	ZONE_UNLOCK(zone);
 }
 
+static void
+zone_drain_all(uma_zone_t zone)
+{
+
+	zone_drain_wait(zone, M_NOWAIT, 1);
+}
+
 void
 zone_drain(uma_zone_t zone)
 {
 
-	zone_drain_wait(zone, M_NOWAIT);
+	zone_drain_wait(zone, M_NOWAIT, 0);
 }
 
 /*
@@ -1729,7 +1764,7 @@ zone_dtor(void *arg, int size, void *udata)
 	 * released and then refilled before we
 	 * remove it... we dont care for now
 	 */
-	zone_drain_wait(zone, M_WAITOK);
+	zone_drain_wait(zone, M_WAITOK, 1);
 	/*
 	 * Unlink all of our kegs.
 	 */
@@ -2243,6 +2278,8 @@ zalloc_start:
 
 		LIST_REMOVE(bucket, ub_link);
 		cache->uc_allocbucket = bucket;
+		zone->uz_cache_size -= bucket->ub_cnt;
+		KASSERT(zone->uz_cache_size >= 0, ("negative uz_cache_size"));
 		ZONE_UNLOCK(zone);
 		goto zalloc_start;
 	}
@@ -2275,8 +2312,12 @@ zalloc_start:
 		 */
 		if (cache->uc_allocbucket == NULL)
 			cache->uc_allocbucket = bucket;
-		else
+		else {
 			LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+			zone->uz_cache_size += bucket->ub_cnt;
+			KASSERT(zone->uz_cache_size >= 0,
+			    ("negative uz_cache_size"));
+		}
 		ZONE_UNLOCK(zone);
 		goto zalloc_start;
 	}
@@ -2753,6 +2794,8 @@ zfree_start:
 		/* ub_cnt is pointing to the last free item */
 		KASSERT(bucket->ub_cnt != 0,
 		    ("uma_zfree: Attempting to insert an empty bucket onto the full list.\n"));
+		zone->uz_cache_size += bucket->ub_cnt;
+		KASSERT(zone->uz_cache_size >= 0, ("negative uz_cache_size"));
 		LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
 	}
 
@@ -3176,7 +3219,7 @@ uma_reclaim(void)
 	zone_foreach(zone_drain);
 	if (vm_page_count_min()) {
 		cache_drain_safe(NULL);
-		zone_foreach(zone_drain);
+		zone_foreach(zone_drain_all);
 	}
 	/*
 	 * Some slabs may have been freed but this zone will be visited early
@@ -3379,7 +3422,6 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 	struct uma_stream_header ush;
 	struct uma_type_header uth;
 	struct uma_percpu_stat ups;
-	uma_bucket_t bucket;
 	struct sbuf sbuf;
 	uma_cache_t cache;
 	uma_klink_t kl;
@@ -3434,8 +3476,7 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 			    (LIST_FIRST(&kz->uk_zones) != z))
 				uth.uth_zone_flags = UTH_ZONE_SECONDARY;
 
-			LIST_FOREACH(bucket, &z->uz_buckets, ub_link)
-				uth.uth_zone_free += bucket->ub_cnt;
+			uth.uth_zone_free = z->uz_cache_size;
 			uth.uth_allocs = z->uz_allocs;
 			uth.uth_frees = z->uz_frees;
 			uth.uth_fails = z->uz_fails;
@@ -3509,7 +3550,6 @@ sysctl_handle_uma_zone_cur(SYSCTL_HANDLER_ARGS)
 DB_SHOW_COMMAND(uma, db_show_uma)
 {
 	uint64_t allocs, frees, sleeps;
-	uma_bucket_t bucket;
 	uma_keg_t kz;
 	uma_zone_t z;
 	int cachefree;
@@ -3529,8 +3569,7 @@ DB_SHOW_COMMAND(uma, db_show_uma)
 			if (!((z->uz_flags & UMA_ZONE_SECONDARY) &&
 			    (LIST_FIRST(&kz->uk_zones) != z)))
 				cachefree += kz->uk_free;
-			LIST_FOREACH(bucket, &z->uz_buckets, ub_link)
-				cachefree += bucket->ub_cnt;
+			cachefree += z->uz_cache_size;
 			db_printf("%18s %8ju %8jd %8d %12ju %8ju %8u\n",
 			    z->uz_name, (uintmax_t)kz->uk_size,
 			    (intmax_t)(allocs - frees), cachefree,
@@ -3544,7 +3583,6 @@ DB_SHOW_COMMAND(uma, db_show_uma)
 DB_SHOW_COMMAND(umacache, db_show_umacache)
 {
 	uint64_t allocs, frees;
-	uma_bucket_t bucket;
 	uma_zone_t z;
 	int cachefree;
 
@@ -3552,8 +3590,7 @@ DB_SHOW_COMMAND(umacache, db_show_umacache)
 	    "Requests", "Bucket");
 	LIST_FOREACH(z, &uma_cachezones, uz_link) {
 		uma_zone_sumstat(z, &cachefree, &allocs, &frees, NULL);
-		LIST_FOREACH(bucket, &z->uz_buckets, ub_link)
-			cachefree += bucket->ub_cnt;
+		cachefree += z->uz_cache_size;
 		db_printf("%18s %8ju %8jd %8d %12ju %8u\n",
 		    z->uz_name, (uintmax_t)z->uz_size,
 		    (intmax_t)(allocs - frees), cachefree,

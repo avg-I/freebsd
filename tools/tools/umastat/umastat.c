@@ -431,6 +431,12 @@ main(int argc, char *argv[])
 			    uzp_userspace->uz_sleeps);
 			printf("    uz_count = %u;\n",
 			    uzp_userspace->uz_count);
+			printf("    uz_cache_size = %u;\n",
+			    uzp_userspace->uz_cache_size);
+			printf("    uz_prev_cache_size = %u;\n",
+			    uzp_userspace->uz_prev_cache_size);
+			printf("    uz_prev_prev_cache_size = %u;\n",
+			    uzp_userspace->uz_prev_prev_cache_size);
 			uma_print_bucketlist(kvm, (void *)
 			    &uzp_userspace->uz_buckets, "uz_buckets",
 			    "    ");

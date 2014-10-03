@@ -280,6 +280,9 @@ struct uma_zone {
 
 	LIST_ENTRY(uma_zone)	uz_link;	/* List of all zones in keg */
 	LIST_HEAD(,uma_bucket)	uz_buckets;	/* full buckets */
+	int		uz_cache_size;
+	int		uz_prev_cache_size;
+	int		uz_prev_prev_cache_size;
 
 	LIST_HEAD(,uma_klink)	uz_kegs;	/* List of kegs. */
 	struct uma_klink	uz_klink;	/* klink for first keg. */
