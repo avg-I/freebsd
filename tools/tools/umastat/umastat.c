@@ -379,6 +379,12 @@ main(int argc, char *argv[])
 		printf("  uk_pgoff = %d\n", kz.uk_pgoff);
 		printf("  uk_ppera = %d\n", kz.uk_ppera);
 		printf("  uk_ipers = %d\n", kz.uk_ipers);
+
+		printf("  uk_free_slabs = %u\n", kz.uk_free_slabs);
+		printf("  uk_full_slabs = %u\n", kz.uk_full_slabs);
+		printf("  uk_part_slabs = %u\n", kz.uk_part_slabs);
+		printf("  uk_part_items = %u\n", kz.uk_part_items);
+
 		uma_print_keg_flags(&kz, "  ");
 
 		if (LIST_FIRST(&kz.uk_zones) == NULL) {

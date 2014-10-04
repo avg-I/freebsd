@@ -884,6 +884,7 @@ keg_drain(uma_keg_t keg)
 		LIST_REMOVE(slab, us_link);
 		keg->uk_pages -= keg->uk_ppera;
 		keg->uk_free -= keg->uk_ipers;
+		keg->uk_free_slabs -= 1;
 
 		if (keg->uk_flags & UMA_ZONE_HASH)
 			UMA_HASH_REMOVE(&keg->uk_hash, slab, slab->us_data);
@@ -2214,6 +2215,8 @@ keg_fetch_slab(uma_keg_t keg, uma_zone_t zone, int flags)
 				LIST_REMOVE(slab, us_link);
 				LIST_INSERT_HEAD(&keg->uk_part_slab, slab,
 				    us_link);
+				keg->uk_free_slabs--;
+				keg->uk_part_slabs++;
 			}
 			MPASS(slab->us_keg == keg);
 			return (slab);
@@ -2244,6 +2247,7 @@ keg_fetch_slab(uma_keg_t keg, uma_zone_t zone, int flags)
 		if (slab) {
 			MPASS(slab->us_keg == keg);
 			LIST_INSERT_HEAD(&keg->uk_part_slab, slab, us_link);
+			keg->uk_part_slabs++;
 			return (slab);
 		}
 		/*
@@ -2291,11 +2295,14 @@ slab_alloc_item(uma_keg_t keg, uma_slab_t slab)
 	item = slab->us_data + (keg->uk_rsize * freei);
 	slab->us_freecount--;
 	keg->uk_free--;
+	keg->uk_part_items += 1;
 
 	/* Move this slab to the full list */
 	if (slab->us_freecount == 0) {
 		LIST_REMOVE(slab, us_link);
 		LIST_INSERT_HEAD(&keg->uk_full_slab, slab, us_link);
+		keg->uk_part_slabs--;
+		keg->uk_full_slabs++;
 	}
 
 	return (item);
@@ -2619,9 +2626,18 @@ slab_free_item(uma_keg_t keg, uma_slab_t slab, void *item)
 	if (slab->us_freecount+1 == keg->uk_ipers) {
 		LIST_REMOVE(slab, us_link);
 		LIST_INSERT_HEAD(&keg->uk_free_slab, slab, us_link);
+		if (keg->uk_ipers > 1) {
+			keg->uk_part_slabs--;
+			keg->uk_part_items -= 1;
+		} else
+			keg->uk_full_slabs--;
+		keg->uk_free_slabs++;
 	} else if (slab->us_freecount == 0) {
 		LIST_REMOVE(slab, us_link);
 		LIST_INSERT_HEAD(&keg->uk_part_slab, slab, us_link);
+		keg->uk_full_slabs--;
+		keg->uk_part_slabs++;
+		keg->uk_part_items += keg->uk_ipers - 1;
 	}
 
 	/* Slab management. */

@@ -211,6 +211,11 @@ struct uma_keg {
 	uint16_t	uk_ipers;	/* Items per slab */
 	uint32_t	uk_flags;	/* Internal flags */
 
+	uint32_t	uk_part_slabs;	/* Count of partially used slabs */
+	uint32_t	uk_free_slabs;	/* Count of free slabs */
+	uint32_t	uk_full_slabs;	/* Count of full slabs */
+	uint32_t	uk_part_items;	/* Free items in partially used slabs */
+
 	/* Least used fields go to the last cache line. */
 	const char	*uk_name;		/* Name of creating zone. */
 	LIST_ENTRY(uma_keg)	uk_link;	/* List of all kegs */
