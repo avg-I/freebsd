@@ -204,12 +204,18 @@ alltraps_pushregs_no_rdi:
 	/*
 	 * DTrace Function Boundary Trace (fbt) probes are triggered
 	 * by int3 (0xcc) which causes the #BP (T_BPTFLT) breakpoint
-	 * interrupt. For all other trap types, just handle them in
+	 * interrupt.  SDT probes are triggered by 'lock nop' invalid
+	 * instruction which causes #UD (T_PRIVINFLT).
+	 * For all other trap types, just handle them in
 	 * the usual way.
 	 */
 	cmpl	$T_BPTFLT,TF_TRAPNO(%rsp)
-	jne	calltrap
+	je	dtrace_hook
+	cmpl	$T_PRIVINFLT,TF_TRAPNO(%rsp)
+	je	dtrace_hook
+	jmp	calltrap
 
+dtrace_hook:
 	/* Check if there is no DTrace hook registered. */
 	cmpq	$0,dtrace_invop_jump_addr
 	je	calltrap
