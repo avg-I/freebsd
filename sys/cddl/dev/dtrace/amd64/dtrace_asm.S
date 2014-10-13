@@ -31,6 +31,7 @@
 #define _ASM
 
 #include <machine/asmacros.h>
+#include <machine/trap.h>
 #include <sys/cpuvar_defs.h>
 #include <sys/dtrace.h>
 
@@ -70,8 +71,11 @@
 	 * that we substituted.
 	 */
 	movq	TF_RIP(%rsp), %rdi
+	cmpl	$T_BPTFLT,TF_TRAPNO(%rsp)
+	jne	1f
 	decq	%rdi
-	movq	TF_RSP(%rsp), %rsi
+	movq	%rdi,TF_RIP(%rsp)
+1:	movq	TF_RSP(%rsp), %rsi
 	movq	TF_RAX(%rsp), %rdx
 	pushq	(%rsi)
 	movq	%rsp, %rsi
@@ -100,6 +104,7 @@ bp_push:
 	subq	$16, %rsp		/* make room for %rbp */
 	pushq	%rax			/* push temp */
 	movq	24(%rsp), %rax		/* load calling RIP */
+	addq	$1, %rax		/* increment over trapping instr */
 	movq	%rax, 8(%rsp)		/* store calling RIP */
 	movq	32(%rsp), %rax		/* load calling CS */
 	movq	%rax, 16(%rsp)		/* store calling CS */
@@ -127,6 +132,7 @@ bp_leave:
 	INTR_POP
 	pushq	%rax			/* push temp */
 	movq	8(%rsp), %rax		/* load calling RIP */
+	addq	$1, %rax		/* increment over trapping instr */
 	movq	%rax, 8(%rsp)		/* store calling RIP */
 	movq	(%rbp), %rax		/* get new %rbp */
 	addq	$8, %rbp		/* adjust new %rsp */
@@ -137,8 +143,12 @@ bp_leave:
 	/*NOTREACHED*/
 
 bp_nop:
-	/* We must emulate a "nop". */
+	/*
+	 * We must emulate a "nop".  This is obviously not hard:  we need only
+	 * advance the %rip by one.
+	 */
 	INTR_POP
+	incq	(%rsp)
 	iretq
 	/*NOTREACHED*/
 
