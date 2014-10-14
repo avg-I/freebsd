@@ -480,7 +480,6 @@ sdt_kld_load(void *arg __unused, struct linker_file *lf)
 	if (linker_file_lookup_set(lf, "sdt_calls", &c_begin, &c_end,
 	    NULL) == 0) {
 		for (callplace = c_begin; callplace < c_end; callplace++) {
-			sdt_callplace_patch(*callplace);
 			SLIST_INSERT_HEAD(&(*callplace)->probe->callplace_list,
 			    *callplace, link);
 			LIST_INSERT_HEAD(

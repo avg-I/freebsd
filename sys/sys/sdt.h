@@ -352,8 +352,6 @@ struct sdt_callplace {
 
 SET_DECLARE(sdt_calls, struct sdt_callplace);
 
-void sdt_callplace_patch(struct sdt_callplace *);
-
 #define SDT_PROBE_FUNC_(fname)	__asm__("				\
 	.global " #fname "\n						\
 	.comm " #fname ", 1\n						\

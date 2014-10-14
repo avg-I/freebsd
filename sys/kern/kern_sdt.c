@@ -27,6 +27,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/kdb.h>
 #include <sys/linker.h>
@@ -58,7 +59,7 @@ sdt_probe_stub(uint32_t id, uintptr_t arg0, uintptr_t arg1,
 #endif
 
 #ifdef __amd64__
-void
+static void
 sdt_callplace_patch(struct sdt_callplace *callplace)
 {
 	uint8_t *ptr = (uint8_t *)callplace->call_addr;
@@ -105,7 +106,7 @@ sdt_callplace_patch(struct sdt_callplace *callplace)
 }
 
 static int
-sdt_callplaces_preprocess(linker_file_t lf, void *arg __unused)
+sdt_lf_patch(linker_file_t lf, void *arg __unused)
 {
 	struct sdt_callplace **callplace, **begin, **end;
 
@@ -118,9 +119,19 @@ sdt_callplaces_preprocess(linker_file_t lf, void *arg __unused)
 }
 
 static void
+sdt_lf_patch_wrapper(void *arg, linker_file_t lf)
+{
+
+	sdt_lf_patch(lf, arg);
+}
+
+static void
 sdt_callplaces_init(void *arg __unused)
 {
-	(void)linker_file_foreach(sdt_callplaces_preprocess, NULL);
+
+	(void)EVENTHANDLER_REGISTER(kld_load, sdt_lf_patch_wrapper, NULL,
+	    EVENTHANDLER_PRI_FIRST);
+	(void)linker_file_foreach(sdt_lf_patch, NULL);
 }
 
 SYSINIT(sdt_patch_init, SI_SUB_KLD, SI_ORDER_MIDDLE + 1,
