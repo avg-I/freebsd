@@ -105,8 +105,8 @@ static dtrace_pops_t sdt_pops = {
 
 static TAILQ_HEAD(, sdt_provider) sdt_prov_list;
 
-eventhandler_tag	sdt_kld_load_tag;
-eventhandler_tag	sdt_kld_unload_try_tag;
+static eventhandler_tag	sdt_kld_load_tag;
+static eventhandler_tag	sdt_kld_unload_try_tag;
 
 #define	SDT_ADDR2NDX(addr)	((((uintptr_t)(addr)) >> 4) & sdt_probetab_mask)
 #define	SDT_PROBETAB_SIZE	0x1000		/* 4k entries -- 16K total */
