@@ -92,15 +92,8 @@ sdt_callplace_patch(struct sdt_callplace *callplace)
 		 * See handle_string:return probe in handle_string()
 		 * in linux_sysctl.c as an exmaple.
 		 */
-#if 0 && defined(INVARIANTS)
-		KASSERT(call_ptr == NULL,
-		    ("multiple call candidates %p and %p",
-		    call_ptr, ptr + off));
-#endif
 		call_ptr = ptr + off;
-#if 1 || !defined(INVARIANTS)
 		break;
-#endif
 	}
 	KASSERT(call_ptr != NULL,
 	    ("no call candidates in %p:%p", (uint8_t *)callplace->call_addr,
