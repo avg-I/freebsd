@@ -152,7 +152,8 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 #define SDT_PROBE_DEFINE(prov, mod, func, name)					\
 	struct sdt_probe sdt_##prov##_##mod##_##func##_##name[1] = {		\
 		{ sizeof(struct sdt_probe), sdt_provider_##prov,		\
-		    { NULL, NULL }, { NULL, NULL }, #mod, #func, #name, 0, 0,	\
+		    { NULL, NULL }, { NULL, NULL }, { NULL },			\
+		    #mod, #func, #name, 0, 0,					\
 		    NULL }							\
 	};									\
 	DATA_SET(sdt_probes_set, sdt_##prov##_##mod##_##func##_##name);
@@ -287,6 +288,8 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 		    (uintptr_t) arg3, (uintptr_t) arg4);			\
 } while (0)
 
+#ifndef __amd64__
+
 #define	SDT_PROBE0(prov, mod, func, name)				\
 	SDT_PROBE(prov, mod, func, name, 0, 0, 0, 0, 0)
 #define	SDT_PROBE1(prov, mod, func, name, arg0)				\
@@ -320,6 +323,188 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 			    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5, \
 			    (uintptr_t)arg6);				       \
 	} while (0)
+
+/*
+ * This type definition must match that of dtrace_probe. It is defined this
+ * way to avoid having to rely on CDDL code.
+ */
+typedef	void (*sdt_probe_func_t)(uint32_t, uintptr_t arg0, uintptr_t arg1,
+    uintptr_t arg2, uintptr_t arg3, uintptr_t arg4);
+
+/*
+ * The 'sdt' provider will set it to dtrace_probe when it loads.
+ */
+extern sdt_probe_func_t	sdt_probe_func;
+
+void sdt_probe_stub(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
+    uintptr_t);
+
+#else /*__amd64__*/
+
+struct sdt_callplace {
+	SLIST_ENTRY(sdt_callplace)	link;
+	LIST_ENTRY(sdt_callplace)	hash_link;
+	struct sdt_probe		*probe;
+	uintptr_t			func_addr;
+	uintptr_t			call_addr;
+	uint32_t			call_size;
+};
+
+SET_DECLARE(sdt_calls, struct sdt_callplace);
+
+void sdt_callplace_patch(struct sdt_callplace *);
+
+#define SDT_PROBE_FUNC_(fname)	__asm__("				\
+	.global " #fname "\n						\
+	.comm " #fname ", 1\n						\
+	.type " #fname ", @function\n					\
+")
+#define	SDT_PROBE_FUNC(fname)	SDT_PROBE_FUNC_(fname)
+
+#define SDT_GEN_FNAME_(prov, mod, func, name)				\
+	__dtrace_sdt_call_##prov##_##mod##_##func##_##name
+#define SDT_GEN_FNAME(prov, mod, func, name)				\
+	SDT_GEN_FNAME_(prov, mod, func, name)
+#define SDT_GEN_PNAME_(prov, mod, func, name)				\
+	sdt_##prov##_##mod##_##func##_##name
+#define SDT_GEN_PNAME(prov, mod, func, name)				\
+	SDT_GEN_PNAME_(prov, mod, func, name)
+
+#define SDT_CALL_START()	__asm__("567:")
+#define STD_CALL_END_(probe, fname)	__asm__("			\
+	568:\n								\
+	.pushsection sdt_call_placess, \"a\"\n				\
+	.align 8\n							\
+	569:\n								\
+	.quad 0\n							\
+	.quad 0\n							\
+	.quad 0\n							\
+	.quad " #probe "\n						\
+	.quad " #fname "\n						\
+	.quad 567b\n							\
+	.long 568b - 567b\n						\
+	.popsection\n							\
+	.pushsection set_sdt_calls, \"a\"\n				\
+	.quad 569b\n							\
+	.popsection\n							\
+	.global __start_set_sdt_calls\n					\
+	.global __stop_set_sdt_calls\n					\
+")
+#define STD_CALL_END(probe, fname)	STD_CALL_END_(probe, fname)
+
+#define SDT_PROBE0(prov, mod, func, name)	do {			\
+	extern void SDT_GEN_FNAME(prov, mod, func, name)(void);		\
+	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));		\
+	SDT_CALL_START();						\
+	SDT_GEN_FNAME(prov, mod, func, name)();				\
+	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
+	    SDT_GEN_FNAME(prov, mod, func, name));			\
+} while (0)
+
+#define SDT_PROBE1(prov, mod, func, name, arg0)	do {			\
+	extern void SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t);	\
+	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));		\
+	SDT_CALL_START();						\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0);		\
+	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
+	    SDT_GEN_FNAME(prov, mod, func, name));			\
+} while (0)
+
+#define SDT_PROBE2(prov, mod, func, name, arg0, arg1)	do {		\
+	extern void SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t,	\
+	    uintptr_t);							\
+	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));		\
+	SDT_CALL_START();						\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,		\
+	    (uintptr_t)arg1);						\
+	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
+	    SDT_GEN_FNAME(prov, mod, func, name));			\
+} while (0)
+
+#define SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2)	do {	\
+	extern void							\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    uintptr_t);							\
+	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
+	SDT_CALL_START();						\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	    (uintptr_t)arg1, (uintptr_t)arg2);				\
+	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
+	    SDT_GEN_FNAME(prov, mod, func, name));	\
+} while (0)
+
+#define SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3)	\
+	do {								\
+	extern void							\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    uintptr_t, uintptr_t);					\
+	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
+	SDT_CALL_START();						\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3);		\
+	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
+	    SDT_GEN_FNAME(prov, mod, func, name));	\
+} while (0)
+
+#define SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
+	do {	\
+	extern void							\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    uintptr_t, uintptr_t, uintptr_t);				\
+	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
+	SDT_CALL_START();						\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4);						\
+	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
+	    SDT_GEN_FNAME(prov, mod, func, name));	\
+} while (0)
+
+#define SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
+	    arg5)	do {						\
+	extern void							\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    uintptr_t, uintptr_t, uintptr_t, uintptr_t); 		\
+	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
+	SDT_CALL_START();						\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4, (uintptr_t)arg5);				\
+	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
+	    SDT_GEN_FNAME(prov, mod, func, name));	\
+} while (0)
+
+#define SDT_PROBE7(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
+	    arg5, arg6)	do {						\
+	extern void							\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);	\
+	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
+	SDT_CALL_START();						\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4, (uintptr_t)arg5, (uintptr_t)arg6);		\
+	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
+	    SDT_GEN_FNAME(prov, mod, func, name));	\
+} while (0)
+
+#define SDT_PROBE8(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
+	    arg5, arg6, arg7)	do {					\
+	extern void							\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,	\
+	    uintptr_t);							\
+	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
+	SDT_CALL_START();						\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4, (uintptr_t)arg5, (uintptr_t)arg6,		\
+	    (uintptr_t)arg7);						\
+	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
+	    SDT_GEN_FNAME(prov, mod, func, name));	\
+} while (0)
+
+#endif /*__amd64__*/
 
 #define	DTRACE_PROBE_IMPL_START(name, arg0, arg1, arg2, arg3, arg4)	do { \
 	static SDT_PROBE_DEFINE(sdt, , , name);				     \
@@ -368,6 +553,10 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #endif /* KDTRACE_HOOKS */
 
+struct sdt_probe;
+struct sdt_provider;
+struct linker_file;
+
 /*
  * This type definition must match that of dtrace_probe. It is defined this
  * way to avoid having to rely on CDDL code.
@@ -380,9 +569,8 @@ typedef	void (*sdt_probe_func_t)(uint32_t, uintptr_t arg0, uintptr_t arg1,
  */
 extern sdt_probe_func_t	sdt_probe_func;
 
-struct sdt_probe;
-struct sdt_provider;
-struct linker_file;
+void sdt_probe_stub(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
+    uintptr_t);
 
 struct sdt_argtype {
 	int		ndx;		/* Argument index. */
@@ -393,12 +581,14 @@ struct sdt_argtype {
 	struct sdt_probe *probe;	/* Ptr to the probe structure. */
 };
 
+LIST_HEAD(sdt_callplace_head, sdt_callplace);
+
 struct sdt_probe {
 	int		version;	/* Set to sizeof(struct sdt_probe). */
 	struct sdt_provider *prov;	/* Ptr to the provider structure. */
-	TAILQ_ENTRY(sdt_probe)
-			probe_entry;	/* SDT probe list entry. */
+	LIST_ENTRY(sdt_probe) probe_entry;	/* SDT probe list entry. */
 	TAILQ_HEAD(, sdt_argtype) argtype_list;
+	SLIST_HEAD(, sdt_callplace) callplace_list;
 	const char	*mod;
 	const char	*func;
 	const char	*name;
@@ -414,9 +604,6 @@ struct sdt_provider {
 	uintptr_t	id;		/* DTrace provider ID. */
 	int		sdt_refs;	/* Number of module references. */
 };
-
-void sdt_probe_stub(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
-    uintptr_t);
 
 SDT_PROVIDER_DECLARE(sdt);
 

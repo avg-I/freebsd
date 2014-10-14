@@ -55,11 +55,18 @@
 #include <sys/mutex.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
+#include <sys/sysctl.h>
+#include <sys/sysmacros.h>
 
 #include <sys/dtrace.h>
+#include <sys/dtrace_impl.h>
 #include <sys/dtrace_bsd.h>
 
+#include <machine/frame.h>
+#include <machine/stack.h>
+
 /* DTrace methods. */
+static uint64_t	sdt_getargval(void *, dtrace_id_t, void *, int, int);
 static void	sdt_getargdesc(void *, dtrace_id_t, void *, dtrace_argdesc_t *);
 static void	sdt_provide_probes(void *, dtrace_probedesc_t *);
 static void	sdt_destroy(void *, dtrace_id_t, void *);
@@ -91,7 +98,7 @@ static dtrace_pops_t sdt_pops = {
 	NULL,
 	NULL,
 	sdt_getargdesc,
-	NULL,
+	sdt_getargval,
 	NULL,
 	sdt_destroy,
 };
@@ -100,6 +107,168 @@ static TAILQ_HEAD(, sdt_provider) sdt_prov_list;
 
 eventhandler_tag	sdt_kld_load_tag;
 eventhandler_tag	sdt_kld_unload_try_tag;
+
+#define	SDT_ADDR2NDX(addr)	((((uintptr_t)(addr)) >> 4) & sdt_probetab_mask)
+#define	SDT_PROBETAB_SIZE	0x1000		/* 4k entries -- 16K total */
+static struct sdt_callplace_head	*sdt_probetab;
+static int				sdt_probetab_size = SDT_PROBETAB_SIZE;
+static int				sdt_probetab_mask;
+
+SYSCTL_DECL(_kern_dtrace);
+SYSCTL_INT(_kern_dtrace, OID_AUTO, sdt_probetab_size, CTLFLAG_RDTUN,
+    &sdt_probetab_size, 0, "Size of SDT probes hash table (power of two)");
+
+#ifdef __amd64__
+/*ARGSUSED*/
+static int
+sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t eax)
+{
+	struct sdt_callplace *callplace;
+	uintptr_t stack0, stack1, stack2, stack3, stack4;
+	int i = 0;
+
+	LIST_FOREACH(callplace, &sdt_probetab[SDT_ADDR2NDX(addr)], hash_link) {
+		if (callplace->call_addr == addr) {
+			/*
+			 * Skip pre-trap bottom of stack value, it has caller's
+			 * caller's return address for FBT, but for SDT it can
+			 * be a random local variable or the 7th probe parameter
+			 * if it is used.
+			 * Then the trap fram follows.
+			 */
+			i++;
+
+			/*
+			 * When accessing the arguments on the stack, we must
+			 * protect against accessing beyond the stack.  We can
+			 * safely set NOFAULT here -- we know that interrupts
+			 * are already disabled.
+			 */
+			DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+			stack0 = stack[i++];
+			stack1 = stack[i++];
+			stack2 = stack[i++];
+			stack3 = stack[i++];
+			stack4 = stack[i++];
+			DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
+			    CPU_DTRACE_BADADDR);
+
+			dtrace_probe(callplace->probe->id, stack0, stack1,
+			    stack2, stack3, stack4);
+
+			return (DTRACE_INVOP_NOP);
+		}
+	}
+
+	return (0);
+}
+
+/*ARGSUSED*/
+uint64_t
+sdt_getargval(void *arg, dtrace_id_t id, void *parg, int argno, int aframes)
+{
+	uintptr_t val;
+	struct amd64_frame *fp = (struct amd64_frame *)dtrace_getfp();
+	uintptr_t *stack;
+	int i;
+
+	/*
+	 * A total of 6 arguments are passed via registers; any argument with
+	 * index of 5 or lower is therefore in a register.
+	 */
+	int inreg = 5;
+
+	for (i = 1; i <= aframes; i++) {
+		fp = fp->f_frame;
+
+		if (P2ROUNDUP(fp->f_retaddr, 16) ==
+		    (long)dtrace_invop_callsite) {
+			/*
+			 * In the case of amd64, we will use the pointer to the
+			 * regs structure that was pushed when we took the
+			 * trap.  To get this structure, we must increment
+			 * beyond the frame structure, and then again beyond
+			 * the calling RIP stored in dtrace_invop().  If the
+			 * argument that we're seeking is passed on the stack,
+			 * we'll pull the true stack pointer out of the saved
+			 * registers and decrement our argument by the number
+			 * of arguments passed in registers; if the argument
+			 * we're seeking is passed in regsiters, we can just
+			 * load it directly.
+			 */
+			struct trapframe *tf =
+			    (struct trapframe *)((uintptr_t)&fp[1]);
+
+			if (argno <= inreg) {
+				switch (argno) {
+				case 0:
+					stack = (uintptr_t *)&tf->tf_rdi;
+					break;
+				case 1:
+					stack = (uintptr_t *)&tf->tf_rsi;
+					break;
+				case 2:
+					stack = (uintptr_t *)&tf->tf_rdx;
+					break;
+				case 3:
+					stack = (uintptr_t *)&tf->tf_rcx;
+					break;
+				case 4:
+					stack = (uintptr_t *)&tf->tf_r8;
+					break;
+				case 5:
+					stack = (uintptr_t *)&tf->tf_r9;
+					break;
+				}
+				argno = 0;
+			} else {
+				stack = (uintptr_t *)(tf->tf_rsp);
+
+				/*
+				 * Note a difference from dtrace_getarg() where
+				 * argno is decremented by inreg.  In that case
+				 * the code is FBT-specific and accounts for a
+				 * return address on the stack that is pushed
+				 * by the call instruction before the trap.
+				 */
+				argno -= (inreg + 1);
+			}
+			goto load;
+		}
+
+	}
+
+	/*
+	 * We know that we did not come through a trap to get into
+	 * dtrace_probe() -- the provider simply called dtrace_probe()
+	 * directly.  As this is the case, we need to shift the argument
+	 * that we're looking for:  the probe ID is the first argument to
+	 * dtrace_probe(), so the argument n will actually be found where
+	 * one would expect to find argument (n + 1).
+	 */
+	argno++;
+
+	if (argno <= inreg) {
+		/*
+		 * This shouldn't happen.  If the argument is passed in a
+		 * register then it should have been, well, passed in a
+		 * register...
+		 */
+		DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
+		return (0);
+	}
+
+	argno -= (inreg + 1);
+	stack = (uintptr_t *)fp + 2;
+
+load:
+	DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+	val = stack[argno];
+	DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
+
+	return (val);
+}
+#endif
 
 static void
 sdt_create_provider(struct sdt_provider *prov)
@@ -185,7 +354,7 @@ sdt_create_probe(struct sdt_probe *probe)
 	if (dtrace_probe_lookup(prov->id, mod, func, name) != DTRACE_IDNONE)
 		return;
 
-	(void)dtrace_probe_create(prov->id, mod, func, name, 1, probe);
+	(void)dtrace_probe_create(prov->id, mod, func, name, 3, probe);
 }
 
 /*
@@ -202,8 +371,13 @@ static void
 sdt_enable(void *arg __unused, dtrace_id_t id, void *parg)
 {
 	struct sdt_probe *probe = parg;
+	struct sdt_callplace *callplace;
 
 	probe->id = id;
+#ifdef __amd64__
+	SLIST_FOREACH(callplace, &probe->callplace_list, link)
+		*(uint8_t *)callplace->call_addr = 0xf0; /* lock prefix */
+#endif
 	probe->sdtp_lf->nenabled++;
 }
 
@@ -211,9 +385,14 @@ static void
 sdt_disable(void *arg __unused, dtrace_id_t id, void *parg)
 {
 	struct sdt_probe *probe = parg;
+	struct sdt_callplace *callplace;
 
 	KASSERT(probe->sdtp_lf->nenabled > 0, ("no probes enabled"));
 
+#ifdef __amd64__
+	SLIST_FOREACH(callplace, &probe->callplace_list, link)
+		*(uint8_t *)callplace->call_addr = 0x90; /* NOP */
+#endif
 	probe->id = 0;
 	probe->sdtp_lf->nenabled--;
 }
@@ -249,6 +428,13 @@ sdt_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
 static void
 sdt_destroy(void *arg, dtrace_id_t id, void *parg)
 {
+#ifdef __amd64__
+	struct sdt_probe *probe = parg;
+	struct sdt_callplace *callplace;
+
+	SLIST_FOREACH(callplace, &probe->callplace_list, link)
+		LIST_REMOVE(callplace, hash_link);
+#endif
 }
 
 /*
@@ -264,6 +450,7 @@ sdt_kld_load(void *arg __unused, struct linker_file *lf)
 	struct sdt_provider **prov, **begin, **end;
 	struct sdt_probe **probe, **p_begin, **p_end;
 	struct sdt_argtype **argtype, **a_begin, **a_end;
+	struct sdt_callplace **callplace, **c_begin, **c_end;
 
 	if (linker_file_lookup_set(lf, "sdt_providers_set", &begin, &end,
 	    NULL) == 0) {
@@ -277,6 +464,7 @@ sdt_kld_load(void *arg __unused, struct linker_file *lf)
 			(*probe)->sdtp_lf = lf;
 			sdt_create_probe(*probe);
 			TAILQ_INIT(&(*probe)->argtype_list);
+			SLIST_INIT(&(*probe)->callplace_list);
 		}
 	}
 
@@ -286,6 +474,18 @@ sdt_kld_load(void *arg __unused, struct linker_file *lf)
 			(*argtype)->probe->n_args++;
 			TAILQ_INSERT_TAIL(&(*argtype)->probe->argtype_list,
 			    *argtype, argtype_entry);
+		}
+	}
+
+	if (linker_file_lookup_set(lf, "sdt_calls", &c_begin, &c_end,
+	    NULL) == 0) {
+		for (callplace = c_begin; callplace < c_end; callplace++) {
+			sdt_callplace_patch(*callplace);
+			SLIST_INSERT_HEAD(&(*callplace)->probe->callplace_list,
+			    *callplace, link);
+			LIST_INSERT_HEAD(
+			    &sdt_probetab[SDT_ADDR2NDX((*callplace)->call_addr)],
+			    *callplace, hash_link);
 		}
 	}
 }
@@ -339,9 +539,20 @@ sdt_linker_file_cb(linker_file_t lf, void *arg __unused)
 static void
 sdt_load()
 {
+	int i;
 
 	TAILQ_INIT(&sdt_prov_list);
 
+	if (!powerof2(sdt_probetab_size) || sdt_probetab_size <= 0)
+		sdt_probetab_size = SDT_PROBETAB_SIZE;
+	sdt_probetab_mask = sdt_probetab_size - 1;
+	sdt_probetab = malloc(sdt_probetab_size * sizeof(*sdt_probetab),
+	    M_SDT, M_WAITOK);
+	for (i = 0; i < sdt_probetab_size; i++)
+		LIST_INIT(&sdt_probetab[i]);
+#ifdef __amd64__
+	dtrace_invop_add(sdt_invop);
+#endif
 	sdt_probe_func = dtrace_probe;
 
 	sdt_kld_load_tag = EVENTHANDLER_REGISTER(kld_load, sdt_kld_load, NULL,
@@ -363,6 +574,10 @@ sdt_unload()
 	EVENTHANDLER_DEREGISTER(kld_unload_try, sdt_kld_unload_try_tag);
 
 	sdt_probe_func = sdt_probe_stub;
+#ifdef __amd64__
+	dtrace_invop_remove(sdt_invop);
+#endif
+	free(sdt_probetab, M_SDT);
 
 	TAILQ_FOREACH_SAFE(prov, &sdt_prov_list, prov_entry, tmp) {
 		ret = dtrace_unregister(prov->id);
