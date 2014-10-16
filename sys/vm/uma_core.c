@@ -903,7 +903,7 @@ finished:
 }
 
 static void
-zone_drain_wait(uma_zone_t zone, int waitok, int all)
+zone_drain_wait(uma_zone_t zone, boolean_t waitok, boolean_t all)
 {
 
 	/*
@@ -914,7 +914,7 @@ zone_drain_wait(uma_zone_t zone, int waitok, int all)
 	 */
 	ZONE_LOCK(zone);
 	while (zone->uz_flags & UMA_ZFLAG_DRAINING) {
-		if (waitok == M_NOWAIT)
+		if (!waitok)
 			goto out;
 		mtx_unlock(&uma_mtx);
 		msleep(zone, zone->uz_lockptr, PVM, "zonedrain", 1);
@@ -940,14 +940,14 @@ static void
 zone_drain_all(uma_zone_t zone)
 {
 
-	zone_drain_wait(zone, M_NOWAIT, 1);
+	zone_drain_wait(zone, FALSE, TRUE);
 }
 
 void
 zone_drain(uma_zone_t zone)
 {
 
-	zone_drain_wait(zone, M_NOWAIT, 0);
+	zone_drain_wait(zone, FALSE, FALSE);
 }
 
 /*
@@ -1715,7 +1715,7 @@ zone_dtor(void *arg, int size, void *udata)
 	 * released and then refilled before we
 	 * remove it... we dont care for now
 	 */
-	zone_drain_wait(zone, M_WAITOK, 1);
+	zone_drain_wait(zone, TRUE, TRUE);
 	/*
 	 * We only destroy kegs from non secondary zones.
 	 */
