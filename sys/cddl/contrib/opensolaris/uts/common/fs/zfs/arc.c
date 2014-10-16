@@ -2477,13 +2477,14 @@ arc_shrink(void)
 }
 
 static int
-arc_reclaim_needed(void)
+arc_reclaim_needed(uint64_t reserve)
 {
 
 #ifdef _KERNEL
-	if (kmem_free_count() < zfs_arc_free_target) {
-		DTRACE_PROBE2(arc__reclaim_freetarget, uint64_t,
-		    kmem_free_count(), uint64_t, zfs_arc_free_target);
+	if (kmem_free_count() < zfs_arc_free_target + atop(reserve)) {
+		DTRACE_PROBE3(arc__reclaim_freetarget, uint64_t,
+		    kmem_free_count(), uint64_t, zfs_arc_free_target,
+		    uint64_t, atop(reserve));
 		return (1);
 	}
 
@@ -2616,7 +2617,7 @@ arc_reclaim_thread(void *dummy __unused)
 
 	mutex_enter(&arc_reclaim_thr_lock);
 	while (arc_thread_exit == 0) {
-		if (arc_reclaim_needed()) {
+		if (arc_reclaim_needed(0)) {
 
 			if (arc_no_grow) {
 				if (last_reclaim == ARC_RECLAIM_CONS) {
@@ -2699,7 +2700,7 @@ arc_adapt(int bytes, arc_state_t *state)
 	}
 	ASSERT((int64_t)arc_p >= 0);
 
-	if (arc_reclaim_needed()) {
+	if (arc_reclaim_needed(0)) {
 		cv_signal(&arc_reclaim_thr_cv);
 		return;
 	}
@@ -2750,7 +2751,7 @@ arc_evict_needed(arc_buf_contents_t type)
 #endif
 #endif	/* sun */
 
-	if (arc_reclaim_needed())
+	if (arc_reclaim_needed(0))
 		return (1);
 
 	return (arc_size > arc_c);
@@ -3939,7 +3940,7 @@ arc_memory_throttle(uint64_t reserve, uint64_t txg)
 		/* Note: reserve is inflated, so we deflate */
 		page_load += reserve / 8;
 		return (0);
-	} else if (page_load > 0 && arc_reclaim_needed()) {
+	} else if (arc_reclaim_needed(reserve)) {
 		/* memory is low, delay before restarting */
 		ARCSTAT_INCR(arcstat_memory_throttle_count, 1);
 		return (SET_ERROR(EAGAIN));
@@ -5406,7 +5407,7 @@ l2arc_feed_thread(void *dummy __unused)
 		/*
 		 * Avoid contributing to memory pressure.
 		 */
-		if (arc_reclaim_needed()) {
+		if (arc_reclaim_needed(0)) {
 			ARCSTAT_BUMP(arcstat_l2_abort_lowmem);
 			spa_config_exit(spa, SCL_L2ARC, dev);
 			continue;
