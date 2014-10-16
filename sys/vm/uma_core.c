@@ -232,6 +232,7 @@ static void *page_alloc(uma_zone_t, int, uint8_t *, int);
 static void *startup_alloc(uma_zone_t, int, uint8_t *, int);
 static void page_free(void *, int, uint8_t);
 static uma_slab_t keg_alloc_slab(uma_keg_t, uma_zone_t, int);
+static void zone_drain_wait_locked(uma_zone_t, boolean_t, boolean_t);
 static void cache_drain(uma_zone_t);
 static void bucket_drain(uma_zone_t, uma_bucket_t);
 static void bucket_cache_drain(uma_zone_t zone, int all);
@@ -498,6 +499,14 @@ keg_timeout(uma_keg_t keg)
 }
 
 static void
+zone_update_stats(uma_zone_t zone)
+{
+
+	zone->uz_prev_prev_cache_size = zone->uz_prev_cache_size;
+	zone->uz_prev_cache_size = zone->uz_cache_size;
+}
+
+static void
 zone_timeout(uma_zone_t zone)
 {
 	uma_keg_t keg;
@@ -513,13 +522,14 @@ zone_timeout(uma_zone_t zone)
 	 * the bucket cache to a working set size estimated based
 	 * on a short history of the bucket cache size.
 	 */
+	ZONE_LOCK(zone);
 	keg_items = (keg->uk_pages / keg->uk_ppera) * keg->uk_ipers;
 	to_drain = MIN(zone->uz_prev_cache_size, zone->uz_prev_prev_cache_size);
 	to_drain = MIN(zone->uz_cache_size, to_drain);
 	if ((size_t)8 * (keg->uk_free + to_drain) > keg_items)
-		zone_drain(zone);
-	zone->uz_prev_prev_cache_size = zone->uz_prev_cache_size;
-	zone->uz_prev_cache_size = zone->uz_cache_size;
+		zone_drain_wait_locked(zone, FALSE, FALSE);
+	zone_update_stats(zone);
+	ZONE_UNLOCK(zone);
 }
 
 /*
@@ -903,7 +913,7 @@ finished:
 }
 
 static void
-zone_drain_wait(uma_zone_t zone, boolean_t waitok, boolean_t all)
+zone_drain_wait_locked(uma_zone_t zone, boolean_t waitok, boolean_t all)
 {
 
 	/*
@@ -912,10 +922,9 @@ zone_drain_wait(uma_zone_t zone, boolean_t waitok, boolean_t all)
 	 * is the only call that knows the structure will still be available
 	 * when it wakes up.
 	 */
-	ZONE_LOCK(zone);
 	while (zone->uz_flags & UMA_ZFLAG_DRAINING) {
 		if (!waitok)
-			goto out;
+			return;
 		mtx_unlock(&uma_mtx);
 		msleep(zone, zone->uz_lockptr, PVM, "zonedrain", 1);
 		mtx_lock(&uma_mtx);
@@ -932,7 +941,14 @@ zone_drain_wait(uma_zone_t zone, boolean_t waitok, boolean_t all)
 	ZONE_LOCK(zone);
 	zone->uz_flags &= ~UMA_ZFLAG_DRAINING;
 	wakeup(zone);
-out:
+}
+
+static void
+zone_drain_wait(uma_zone_t zone, boolean_t waitok, boolean_t all)
+{
+
+	ZONE_LOCK(zone);
+	zone_drain_wait_locked(zone, waitok, all);
 	ZONE_UNLOCK(zone);
 }
 
