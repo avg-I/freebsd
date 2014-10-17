@@ -541,6 +541,8 @@ qc_init(vmem_t *vm, vmem_size_t qcache_max)
 	MPASS((qcache_max & vm->vm_quantum_mask) == 0);
 	qcache_idx_max = MIN(qcache_max >> vm->vm_quantum_shift,
 	    VMEM_QCACHE_IDX_MAX);
+	if (qcache_idx_max == 0)
+		qcache_idx_max = VMEM_QCACHE_IDX_MAX;
 	vm->vm_qcache_max = qcache_idx_max << vm->vm_quantum_shift;
 	for (i = 0; i < qcache_idx_max; i++) {
 		qc = &vm->vm_qcache[i];
