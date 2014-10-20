@@ -210,7 +210,7 @@ uma_dbg_getslab(uma_zone_t zone, void *item)
 		 * essentially holds a reference.
 		 */
 		ZONE_LOCK(zone);
-		keg = LIST_FIRST(&zone->uz_kegs)->kl_keg;
+		keg = zone->uz_keg;
 		if (keg->uk_flags & UMA_ZONE_HASH)
 			slab = hash_sfind(&keg->uk_hash, mem);
 		else
@@ -231,7 +231,7 @@ uma_dbg_alloc(uma_zone_t zone, uma_slab_t slab, void *item)
 	uma_keg_t keg;
 	int freei;
 
-	if (zone_first_keg(zone) == NULL)
+	if (zone->uz_keg == NULL)
 		return;
 	if (slab == NULL) {
 		slab = uma_dbg_getslab(zone, item);
@@ -261,7 +261,7 @@ uma_dbg_free(uma_zone_t zone, uma_slab_t slab, void *item)
 	uma_keg_t keg;
 	int freei;
 
-	if (zone_first_keg(zone) == NULL)
+	if (zone->uz_keg == NULL)
 		return;
 	if (slab == NULL) {
 		slab = uma_dbg_getslab(zone, item);
