@@ -87,7 +87,7 @@ __FBSDID("$FreeBSD$");
 
 #define	BT_FLAGS	(M_NOWAIT | M_WAITOK | M_USE_RESERVE | M_NOVM)
 
-#define	QC_NAME_MAX	16
+#define	QC_NAME_MAX	32
 
 /*
  * Data structures private to vmem.
