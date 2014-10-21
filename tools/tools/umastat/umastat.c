@@ -44,14 +44,16 @@
 #include <unistd.h>
 
 static struct nlist namelist[] = {
-#define X_UMA_KEGS	0
+#define X_UMA_KEGS		0
 	{ .n_name = "_uma_kegs" },
-#define X_MP_MAXCPUS	1
+#define X_MP_MAXCPUS		1
 	{ .n_name = "_mp_maxcpus" },
-#define X_MP_MAXID	2 
+#define X_MP_MAXID		2
 	{ .n_name = "_mp_maxid" },
-#define	X_ALLCPU	3
+#define	X_ALLCPU		3
 	{ .n_name = "_all_cpus" },
+#define	X_UMA_CACHEZONES	4
+	{ .n_name = "_uma_cachezones" },
 	{ .n_name = "" },
 };
 
@@ -279,16 +281,93 @@ uma_print_cache(kvm_t *kvm, struct uma_cache *cache, const char *name,
 	printf("%s};\n", spaces);
 }
 
+static size_t uzp_userspace_len;
+static int all_cpus;
+static int mp_maxid;
+
+static void
+uma_print_zone(kvm_t *kvm, struct uma_zone *uzp, struct uma_zone *uzp_userspace)
+{
+	char name[MEMTYPE_MAXNAME];
+	int cpu, ret, ub_cnt, ub_entries;
+
+	/*
+	 * We actually copy in twice: once with the base
+	 * structure, so that we can then decide if we also
+	 * need to copy in the caches.  This prevents us
+	 * from reading past the end of the base UMA zones,
+	 * which is unlikely to cause problems but could.
+	 */
+	ret = kread(kvm, uzp, uzp_userspace,
+	    sizeof(struct uma_zone), 0);
+	if (ret != 0) {
+		free(uzp_userspace);
+		errx(-1, "kread: %s", kvm_geterr(kvm));
+	}
+	if (!(uzp_userspace->uz_flags & UMA_ZFLAG_INTERNAL)) {
+		ret = kread(kvm, uzp, uzp_userspace,
+		    uzp_userspace_len, 0);
+		if (ret != 0) {
+			free(uzp_userspace);
+			errx(-1, "kread: %s",
+			    kvm_geterr(kvm));
+		}
+	}
+	ret = kread_string(kvm, uzp_userspace->uz_name, name,
+	    MEMTYPE_MAXNAME);
+	if (ret != 0) {
+		free(uzp_userspace);
+		errx(-1, "kread_string: %s", kvm_geterr(kvm));
+	}
+	printf("  Zone {\n");
+	printf("    uz_name = \"%s\";\n", name);
+	printf("    uz_allocs = %lu;\n",
+	    uzp_userspace->uz_allocs);
+	printf("    uz_frees = %lu;\n",
+	    uzp_userspace->uz_frees);
+	printf("    uz_fails = %lu;\n",
+	    uzp_userspace->uz_fails);
+	printf("    uz_sleeps = %ju;\n",
+	    uzp_userspace->uz_sleeps);
+	printf("    uz_count = %u;\n",
+	    uzp_userspace->uz_count);
+	printf("    uz_cache_size = %u;\n",
+	    uzp_userspace->uz_cache_size);
+	printf("    uz_prev_cache_size = %u;\n",
+	    uzp_userspace->uz_prev_cache_size);
+	printf("    uz_prev_prev_cache_size = %u;\n",
+	    uzp_userspace->uz_prev_prev_cache_size);
+	uma_print_bucketlist(kvm, (void *)
+	    &uzp_userspace->uz_buckets, "uz_buckets",
+	    "    ");
+
+	if (!(uzp_userspace->uz_flags & UMA_ZFLAG_INTERNAL)) {
+		ub_cnt = ub_entries = 0;
+		for (cpu = 0; cpu <= mp_maxid; cpu++) {
+			/* if (CPU_ABSENT(cpu)) */
+			if ((all_cpus & (1 << cpu)) == 0)
+				continue;
+			uma_print_cache(kvm,
+			    &uzp_userspace->uz_cpu[cpu],
+			    "uc_cache", cpu, "    ", &ub_cnt,
+			    &ub_entries);
+		}
+		printf("    // %d cache total cnt, %d total "
+		    "entries\n", ub_cnt, ub_entries);
+	}
+
+	printf("  };\n");
+}
+
 int
 main(int argc, char *argv[])
 {
 	LIST_HEAD(, uma_keg) uma_kegs;
-	char name[MEMTYPE_MAXNAME];
+	LIST_HEAD(, uma_zone) uma_cachezones;
 	struct uma_keg *kzp, kz;
 	struct uma_zone *uzp, *uzp_userspace;
 	kvm_t *kvm;
-	int all_cpus, cpu, mp_maxcpus, mp_maxid, ret, ub_cnt, ub_entries;
-	size_t uzp_userspace_len;
+	int mp_maxcpus, ret;
 	char *memf, *nlistf;
 	int ch;
 	char errbuf[_POSIX2_LINE_MAX];
@@ -348,6 +427,11 @@ main(int argc, char *argv[])
 	if (ret != 0)
 		errx(-1, "kread_symbol: %s", kvm_geterr(kvm));
 
+	ret = kread_symbol(kvm, X_UMA_CACHEZONES, &uma_cachezones,
+	    sizeof(uma_cachezones), 0);
+	if (ret != 0)
+		errx(-1, "kread_symbol: %s", kvm_geterr(kvm));
+
 	/*
 	 * uma_zone_t ends in an array of mp_maxid cache entries.  However,
 	 * it is statically declared as an array of size 1, so we need to
@@ -393,76 +477,16 @@ main(int argc, char *argv[])
 			continue;
 		}
 		for (uzp = LIST_FIRST(&kz.uk_zones); uzp != NULL; uzp =
-		    LIST_NEXT(uzp_userspace, uz_link)) {
-			/*
-			 * We actually copy in twice: once with the base
-			 * structure, so that we can then decide if we also
-			 * need to copy in the caches.  This prevents us
-			 * from reading past the end of the base UMA zones,
-			 * which is unlikely to cause problems but could.
-			 */
-			ret = kread(kvm, uzp, uzp_userspace,
-			    sizeof(struct uma_zone), 0);
-			if (ret != 0) {
-				free(uzp_userspace);
-				errx(-1, "kread: %s", kvm_geterr(kvm));
-			}
-			if (!(kz.uk_flags & UMA_ZFLAG_INTERNAL)) {
-				ret = kread(kvm, uzp, uzp_userspace,
-				    uzp_userspace_len, 0);
-				if (ret != 0) {
-					free(uzp_userspace);
-					errx(-1, "kread: %s",
-					    kvm_geterr(kvm));
-				}
-			}
-			ret = kread_string(kvm, uzp_userspace->uz_name, name,
-			    MEMTYPE_MAXNAME);
-			if (ret != 0) {
-				free(uzp_userspace);
-				errx(-1, "kread_string: %s", kvm_geterr(kvm));
-			}
-			printf("  Zone {\n");
-			printf("    uz_name = \"%s\";\n", name);
-			printf("    uz_allocs = %lu;\n",
-			    uzp_userspace->uz_allocs);
-			printf("    uz_frees = %lu;\n",
-			    uzp_userspace->uz_frees);
-			printf("    uz_fails = %lu;\n",
-			    uzp_userspace->uz_fails);
-			printf("    uz_sleeps = %ju;\n",
-			    uzp_userspace->uz_sleeps);
-			printf("    uz_count = %u;\n",
-			    uzp_userspace->uz_count);
-			printf("    uz_cache_size = %u;\n",
-			    uzp_userspace->uz_cache_size);
-			printf("    uz_prev_cache_size = %u;\n",
-			    uzp_userspace->uz_prev_cache_size);
-			printf("    uz_prev_prev_cache_size = %u;\n",
-			    uzp_userspace->uz_prev_prev_cache_size);
-			uma_print_bucketlist(kvm, (void *)
-			    &uzp_userspace->uz_buckets, "uz_buckets",
-			    "    ");
-
-			if (!(kz.uk_flags & UMA_ZFLAG_INTERNAL)) {
-				ub_cnt = ub_entries = 0;
-				for (cpu = 0; cpu <= mp_maxid; cpu++) {
-					/* if (CPU_ABSENT(cpu)) */
-					if ((all_cpus & (1 << cpu)) == 0)
-						continue;
-					uma_print_cache(kvm,
-					    &uzp_userspace->uz_cpu[cpu],
-					    "uc_cache", cpu, "    ", &ub_cnt,
-					    &ub_entries);
-				}
-				printf("    // %d cache total cnt, %d total "
-				    "entries\n", ub_cnt, ub_entries);
-			}
-
-			printf("  };\n");
-		}
+		    LIST_NEXT(uzp_userspace, uz_link))
+			uma_print_zone(kvm, uzp, uzp_userspace);
 		printf("};\n");
 	}
+
+	printf("\nCacheZones {\n");
+	for (uzp = LIST_FIRST(&uma_cachezones); uzp != NULL; uzp =
+	    LIST_NEXT(uzp_userspace, uz_link))
+		uma_print_zone(kvm, uzp, uzp_userspace);
+	printf("};\n");
 
 	free(uzp_userspace);
 	return (0);
