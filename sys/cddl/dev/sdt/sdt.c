@@ -123,7 +123,6 @@ SYSCTL_INT(_kern_dtrace, OID_AUTO, sdt_probetab_size, CTLFLAG_RDTUN,
 static int
 sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t eax)
 {
-	solaris_cpu_t *cpu = &solaris_cpu[curcpu];
 	struct sdt_callplace *callplace;
 	uintptr_t stack0, stack1, stack2, stack3, stack4;
 	int i = 0;
@@ -154,10 +153,8 @@ sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t eax)
 			DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
 			    CPU_DTRACE_BADADDR);
 
-			cpu->cpu_dtrace_caller = addr;
 			dtrace_probe(callplace->probe->id, stack0, stack1,
 			    stack2, stack3, stack4);
-			cpu->cpu_dtrace_caller = 0;
 
 			return (DTRACE_INVOP_NOP);
 		}
