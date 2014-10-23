@@ -2444,14 +2444,11 @@ arc_shrink(void)
 
 	if (arc_c > arc_c_min) {
 		uint64_t to_free;
-		int paging_target;
 
 		DTRACE_PROBE2(arc__shrink, uint64_t, arc_c, uint64_t,
 			arc_c_min);
 #ifdef _KERNEL
-		paging_target = vm_paging_target();
-		to_free = MAX(arc_c >> arc_shrink_shift,
-		    ptob(MAX(paging_target, 0)));
+		to_free = arc_c >> arc_shrink_shift;
 #else
 		to_free = arc_c >> arc_shrink_shift;
 #endif
