@@ -184,11 +184,14 @@ sdt_getargval(void *arg, dtrace_id_t id, void *parg, int argno, int aframes)
 		if (P2ROUNDUP(fp->f_retaddr, 16) ==
 		    (long)dtrace_invop_callsite) {
 			/*
-			 * In the case of amd64, we will use the pointer to the
-			 * regs structure that was pushed when we took the
-			 * trap.  To get this structure, we must increment
-			 * beyond the frame structure, and then again beyond
-			 * the calling RIP stored in dtrace_invop().  If the
+			 * In the case of amd64, we will use the trap frame
+			 * that was pushed when we took the trap.  To get
+			 * this structure, we must increment beyond the
+			 * amd64_frame, the padding to 16-byte alignment and
+			 * the FBT-specifc parameter stored in dtrace_invop().
+			 * Note that amd64_frame includes not only the address
+			 * of previous frame and the return address, but also
+			 * a placeholder for the first on-stack argument. If the
 			 * argument that we're seeking is passed on the stack,
 			 * we'll pull the true stack pointer out of the saved
 			 * registers and decrement our argument by the number
@@ -197,7 +200,8 @@ sdt_getargval(void *arg, dtrace_id_t id, void *parg, int argno, int aframes)
 			 * load it directly.
 			 */
 			struct trapframe *tf =
-			    (struct trapframe *)((uintptr_t)&fp[1]);
+			    (struct trapframe *)((uintptr_t)&fp[1] +
+			    sizeof(long));
 
 			if (argno <= inreg) {
 				switch (argno) {
