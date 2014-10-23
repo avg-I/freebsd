@@ -514,7 +514,6 @@ zone_timeout(uma_zone_t zone)
 	int to_drain;
 
 	keg = zone->uz_keg;
-	keg_timeout(keg);
 
 	/*
 	 * If more than 12.5% of items in the zone (its first keg) are
@@ -523,13 +522,20 @@ zone_timeout(uma_zone_t zone)
 	 * on a short history of the bucket cache size.
 	 */
 	ZONE_LOCK(zone);
-	keg_items = (keg->uk_pages / keg->uk_ppera) * keg->uk_ipers;
-	to_drain = MIN(zone->uz_prev_cache_size, zone->uz_prev_prev_cache_size);
-	to_drain = MIN(zone->uz_cache_size, to_drain);
-	if ((size_t)8 * (keg->uk_free + to_drain) > keg_items)
+	if (keg != NULL) {
+		keg_items = (keg->uk_pages / keg->uk_ppera) * keg->uk_ipers;
+		to_drain = MIN(zone->uz_prev_cache_size,
+		    zone->uz_prev_prev_cache_size);
+		to_drain = MIN(zone->uz_cache_size, to_drain);
+		if ((size_t)8 * (keg->uk_free + to_drain) > keg_items)
+			zone_drain_wait_locked(zone, FALSE, FALSE);
+	} else
 		zone_drain_wait_locked(zone, FALSE, FALSE);
 	zone_update_stats(zone);
 	ZONE_UNLOCK(zone);
+
+	if (keg != 0)
+		keg_timeout(keg);
 }
 
 /*
@@ -931,14 +937,18 @@ zone_drain_wait_locked(uma_zone_t zone, boolean_t waitok, boolean_t all)
 	}
 	zone->uz_flags |= UMA_ZFLAG_DRAINING;
 	bucket_cache_drain(zone, all);
-	ZONE_UNLOCK(zone);
-	/*
-	 * The DRAINING flag protects us from being freed while
-	 * we're running.  Normally the uma_mtx would protect us but we
-	 * must be able to release and acquire the right lock for each keg.
-	 */
-	keg_drain(zone->uz_keg);
-	ZONE_LOCK(zone);
+
+	if (zone->uz_keg != NULL) {
+		ZONE_UNLOCK(zone);
+		/*
+		 * The DRAINING flag protects us from being freed while
+		 * we're running.  Normally the uma_mtx would protect us but we
+		 * must be able to release and acquire the right lock for
+		 * the keg.
+		 */
+		keg_drain(zone->uz_keg);
+		ZONE_LOCK(zone);
+	}
 	zone->uz_flags &= ~UMA_ZFLAG_DRAINING;
 	wakeup(zone);
 }
@@ -1765,6 +1775,8 @@ zone_foreach(void (*zfunc)(uma_zone_t))
 		LIST_FOREACH(zone, &keg->uk_zones, uz_link)
 			zfunc(zone);
 	}
+	LIST_FOREACH(zone, &uma_cachezones, uz_link)
+		zfunc(zone);
 	mtx_unlock(&uma_mtx);
 }
 
