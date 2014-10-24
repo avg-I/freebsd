@@ -200,6 +200,8 @@ struct tcpcb {
 	u_int	t_keepcnt;		/* number of keepalives before close */
 
 	u_int	t_tsomax;		/* TSO total burst length limit in bytes */
+	u_int	t_pmtud_saved_maxopd;	/* pre-blackhole MSS */
+	u_int	t_flags2;		/* More tcpcb flags storage */
 
 	uint32_t t_ispare[6];		/* 5 UTO, 1 TBD */
 	uint32_t t_tsomaxsegcount;	/* TSO maximum segment count */
@@ -276,6 +278,13 @@ struct tcpcb {
  */
 #define	TCP_SIG_SPI	0x1000
 #endif /* TCP_SIGNATURE */
+
+/*
+ * Flags for PLPMTU handling, t_flags2
+ */
+#define	TF2_PLPMTU_BLACKHOLE	0x00000001 /* Possible PLPMTUD Black Hole. */
+#define	TF2_PLPMTU_PMTUD	0x00000002 /* Allowed to attempt PLPMTUD. */
+#define	TF2_PLPMTU_MAXSEGSNT	0x00000004 /* Last seg sent was full seg. */
 
 /*
  * Structure to hold TCP options that are only used during segment
@@ -685,9 +694,15 @@ int	 tcp_twcheck(struct inpcb *, struct tcpopt *, struct tcphdr *,
 	    struct mbuf *, int);
 void	 tcp_setpersist(struct tcpcb *);
 #ifdef TCP_SIGNATURE
+struct secasvar;
+struct secasvar *tcp_get_sav(struct mbuf *, u_int);
+int	 tcp_signature_do_compute(struct mbuf *, int, int, u_char *,
+	    struct secasvar *);
 int	 tcp_signature_compute(struct mbuf *, int, int, int, u_char *, u_int);
 int	 tcp_signature_verify(struct mbuf *, int, int, int, struct tcpopt *,
 	    struct tcphdr *, u_int);
+int	tcp_signature_check(struct mbuf *m, int off0, int tlen, int optlen,
+	    struct tcpopt *to, struct tcphdr *th, u_int tcpbflag);
 #endif
 void	 tcp_slowtimo(void);
 struct tcptemp *

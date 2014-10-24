@@ -177,6 +177,7 @@ struct init_ops init_ops = {
 	.mp_bootaddress =		mp_bootaddress,
 	.start_all_aps =		native_start_all_aps,
 #endif
+	.msi_init =			msi_init,
 };
 
 /*
@@ -184,9 +185,6 @@ struct init_ops init_ops = {
  * the physical address at which the kernel is loaded.
  */
 extern char kernphys[];
-#ifdef DDB
-extern vm_offset_t ksym_start, ksym_end;
-#endif
 
 struct msgbuf *msgbufp;
 
@@ -246,7 +244,7 @@ cpu_startup(dummy)
 	 * We do this by disabling a bit in the SMI_EN (SMI Control and
 	 * Enable register) of the Intel ICH LPC Interface Bridge. 
 	 */
-	sysenv = getenv("smbios.system.product");
+	sysenv = kern_getenv("smbios.system.product");
 	if (sysenv != NULL) {
 		if (strncmp(sysenv, "MacBook1,1", 10) == 0 ||
 		    strncmp(sysenv, "MacBook3,1", 10) == 0 ||
@@ -278,7 +276,7 @@ cpu_startup(dummy)
 	 * Display physical memory if SMBIOS reports reasonable amount.
 	 */
 	memsize = 0;
-	sysenv = getenv("smbios.memory.enabled");
+	sysenv = kern_getenv("smbios.memory.enabled");
 	if (sysenv != NULL) {
 		memsize = (uintmax_t)strtoul(sysenv, (char **)NULL, 10) << 10;
 		freeenv(sysenv);
@@ -1823,6 +1821,10 @@ static caddr_t
 native_parse_preload_data(u_int64_t modulep)
 {
 	caddr_t kmdp;
+#ifdef DDB
+	vm_offset_t ksym_start;
+	vm_offset_t ksym_end;
+#endif
 
 	preload_metadata = (caddr_t)(uintptr_t)(modulep + KERNBASE);
 	preload_bootstrap_relocate(KERNBASE);
@@ -1834,6 +1836,7 @@ native_parse_preload_data(u_int64_t modulep)
 #ifdef DDB
 	ksym_start = MD_FETCH(kmdp, MODINFOMD_SSYM, uintptr_t);
 	ksym_end = MD_FETCH(kmdp, MODINFOMD_ESYM, uintptr_t);
+	db_fetch_ksymtab(ksym_start, ksym_end);
 #endif
 
 	return (kmdp);
@@ -2067,7 +2070,7 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	thread0.td_pcb->pcb_cr3 = KPML4phys; /* PCID 0 is reserved for kernel */
 	thread0.td_frame = &proc0_tf;
 
-        env = getenv("kernelname");
+        env = kern_getenv("kernelname");
 	if (env != NULL)
 		strlcpy(kernelname, env, sizeof(kernelname));
 
