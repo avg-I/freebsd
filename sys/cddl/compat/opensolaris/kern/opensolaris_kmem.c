@@ -114,42 +114,6 @@ zfs_kmem_free(void *buf, size_t size __unused)
 	free(buf, M_SOLARIS);
 }
 
-/*
- * The return values from kmem_free_* are only valid once the pagedaemon
- * has been initialised, before then they return 0.
- * 
- * To ensure the returns are valid the caller can use a SYSINIT with
- * subsystem set to SI_SUB_KTHREAD_PAGE and an order of at least
- * SI_ORDER_SECOND.
- */
-u_int
-kmem_free_target(void)
-{
-
-	return (vm_cnt.v_free_target);
-}
-
-u_int
-kmem_free_min(void)
-{
-
-	return (vm_cnt.v_free_min);
-}
-
-u_int
-kmem_free_count(void)
-{
-
-	return (vm_cnt.v_free_count + vm_cnt.v_cache_count);
-}
-
-u_int
-kmem_page_count(void)
-{
-
-	return (vm_cnt.v_page_count);
-}
-
 static int
 kmem_std_constructor(void *mem, int size __unused, void *private, int flags)
 {
