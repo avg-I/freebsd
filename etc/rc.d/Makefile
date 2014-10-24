@@ -70,13 +70,12 @@ FILES=	DAEMON \
 	iscsictl \
 	iscsid \
 	jail \
-	kadmind \
-	kdc \
-	keyserv \
-	kfd \
+	${_kadmind} \
+	${_kdc} \
+	${_kfd} \
 	kld \
 	kldxref \
-	kpasswdd \
+	${_kpasswdd} \
 	ldconfig \
 	local \
 	localpkg \
@@ -182,8 +181,19 @@ _casperd=	casperd
 _nscd=		nscd
 .endif
 
+.if ${MK_KERBEROS} != "no"
+_kadmind=	kadmind
+_kdc=		kdc
+_kfd=		kfd
+_kpasswdd=	kpasswdd
+.endif
+
 .if ${MK_OFED} != "no"
 _opensm=	opensm
+.endif
+
+.if ${MK_OPENSSL} != "no"
+FILES+=		keyserv
 .endif
 
 .if ${MK_OPENSSH} != "no"

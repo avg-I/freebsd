@@ -576,15 +576,24 @@ linux_file_stat(struct file *fp, struct stat *sb, struct ucred *active_cred,
 	return (EOPNOTSUPP);
 }
 
+static int
+linux_file_fill_kinfo(struct file *fp, struct kinfo_file *kif,
+    struct filedesc *fdp)
+{
+
+	return (0);
+}
+
 struct fileops linuxfileops = {
 	.fo_read = linux_file_read,
 	.fo_write = invfo_rdwr,
 	.fo_truncate = invfo_truncate,
-	.fo_ioctl = linux_file_ioctl,
-	.fo_poll = linux_file_poll,
 	.fo_kqfilter = invfo_kqfilter,
 	.fo_stat = linux_file_stat,
+	.fo_fill_kinfo = linux_file_fill_kinfo,
+	.fo_poll = linux_file_poll,
 	.fo_close = linux_file_close,
+	.fo_ioctl = linux_file_ioctl,
 	.fo_chmod = invfo_chmod,
 	.fo_chown = invfo_chown,
 	.fo_sendfile = invfo_sendfile,
