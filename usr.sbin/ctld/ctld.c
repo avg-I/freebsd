@@ -255,7 +255,7 @@ auth_new_chap_mutual(struct auth_group *ag, const char *user,
 		if (ag->ag_name != NULL)
 			log_warnx("cannot mix \"chap-mutual\" authentication "
 			    "with other types for auth-group \"%s\"",
-			    ag->ag_name); 
+			    ag->ag_name);
 		else
 			log_warnx("cannot mix \"chap-mutual\" authentication "
 			    "with other types for target \"%s\"",
@@ -561,8 +561,10 @@ portal_new(struct portal_group *pg)
 static void
 portal_delete(struct portal *portal)
 {
+
 	TAILQ_REMOVE(&portal->p_portal_group->pg_portals, portal, p_next);
-	freeaddrinfo(portal->p_ai);
+	if (portal->p_ai != NULL)
+		freeaddrinfo(portal->p_ai);
 	free(portal->p_listen);
 	free(portal);
 }
@@ -633,8 +635,7 @@ portal_group_add_listen(struct portal_group *pg, const char *value, bool iser)
 	arg = portal->p_listen;
 	if (arg[0] == '\0') {
 		log_warnx("empty listen address");
-		free(portal->p_listen);
-		free(portal);
+		portal_delete(portal);
 		return (1);
 	}
 	if (arg[0] == '[') {
@@ -646,8 +647,7 @@ portal_group_add_listen(struct portal_group *pg, const char *value, bool iser)
 		if (arg == NULL) {
 			log_warnx("invalid listen address %s",
 			    portal->p_listen);
-			free(portal->p_listen);
-			free(portal);
+			portal_delete(portal);
 			return (1);
 		}
 		if (arg[0] == '\0') {
@@ -657,8 +657,7 @@ portal_group_add_listen(struct portal_group *pg, const char *value, bool iser)
 		} else {
 			log_warnx("invalid listen address %s",
 			    portal->p_listen);
-			free(portal->p_listen);
-			free(portal);
+			portal_delete(portal);
 			return (1);
 		}
 	} else {
@@ -691,8 +690,7 @@ portal_group_add_listen(struct portal_group *pg, const char *value, bool iser)
 	if (error != 0) {
 		log_warnx("getaddrinfo for %s failed: %s",
 		    portal->p_listen, gai_strerror(error));
-		free(portal->p_listen);
-		free(portal);
+		portal_delete(portal);
 		return (1);
 	}
 
@@ -756,7 +754,7 @@ valid_iscsi_name(const char *name)
 		for (i = strlen("iqn."); name[i] != '\0'; i++) {
 			/*
 			 * XXX: We should verify UTF-8 normalisation, as defined
-			 * 	by 3.2.6.2: iSCSI Name Encoding.
+			 *      by 3.2.6.2: iSCSI Name Encoding.
 			 */
 			if (isalnum(name[i]))
 				continue;
@@ -1166,7 +1164,7 @@ conf_verify(struct conf *conf)
 	struct portal_group *pg;
 	struct target *targ;
 	struct lun *lun;
-	bool found_lun;
+	bool found;
 	int error;
 
 	if (conf->conf_pidfile_path == NULL)
@@ -1183,14 +1181,14 @@ conf_verify(struct conf *conf)
 			    "default");
 			assert(targ->t_portal_group != NULL);
 		}
-		found_lun = false;
+		found = false;
 		TAILQ_FOREACH(lun, &targ->t_luns, l_next) {
 			error = conf_verify_lun(lun);
 			if (error != 0)
 				return (error);
-			found_lun = true;
+			found = true;
 		}
-		if (!found_lun) {
+		if (!found) {
 			log_warnx("no LUNs defined for target \"%s\"",
 			    targ->t_name);
 		}
@@ -1221,11 +1219,20 @@ conf_verify(struct conf *conf)
 		else
 			assert(ag->ag_target == NULL);
 
+		found = false;
 		TAILQ_FOREACH(targ, &conf->conf_targets, t_next) {
-			if (targ->t_auth_group == ag)
+			if (targ->t_auth_group == ag) {
+				found = true;
 				break;
+			}
 		}
-		if (targ == NULL && ag->ag_name != NULL &&
+		TAILQ_FOREACH(pg, &conf->conf_portal_groups, pg_next) {
+			if (pg->pg_discovery_auth_group == ag) {
+				found = true;
+				break;
+			}
+		}
+		if (!found && ag->ag_name != NULL &&
 		    strcmp(ag->ag_name, "default") != 0 &&
 		    strcmp(ag->ag_name, "no-authentication") != 0 &&
 		    strcmp(ag->ag_name, "no-access") != 0) {
@@ -1283,10 +1290,10 @@ conf_apply(struct conf *oldconf, struct conf *newconf)
 
 	/*
 	 * XXX: If target or lun removal fails, we should somehow "move"
-	 * 	the old lun or target into newconf, so that subsequent
-	 * 	conf_apply() would try to remove them again.  That would
-	 * 	be somewhat hairy, though, and lun deletion failures don't
-	 * 	really happen, so leave it as it is for now.
+	 *      the old lun or target into newconf, so that subsequent
+	 *      conf_apply() would try to remove them again.  That would
+	 *      be somewhat hairy, though, and lun deletion failures don't
+	 *      really happen, so leave it as it is for now.
 	 */
 	TAILQ_FOREACH_SAFE(oldtarg, &oldconf->conf_targets, t_next, tmptarg) {
 		/*
@@ -1415,7 +1422,8 @@ conf_apply(struct conf *oldconf, struct conf *newconf)
 			if (oldtarg != NULL) {
 				oldlun = lun_find(oldtarg, newlun->l_lun);
 				if (oldlun != NULL) {
-					if (newlun->l_size != oldlun->l_size) {
+					if (newlun->l_size != oldlun->l_size ||
+					    newlun->l_size == 0) {
 						log_debugx("resizing lun %d, "
 						    "target %s, CTL lun %d",
 						    newlun->l_lun,
@@ -1760,9 +1768,7 @@ main_loop(struct conf *conf, bool dont_fork)
 			client_salen = sizeof(client_sa);
 			kernel_accept(&connection_id, &portal_id,
 			    (struct sockaddr *)&client_sa, &client_salen);
-			if (client_salen < client_sa.ss_len)
-				log_errx(1, "salen %u < %u",
-				    client_salen, client_sa.ss_len);
+			assert(client_salen >= client_sa.ss_len);
 
 			log_debugx("incoming connection, id %d, portal id %d",
 			    connection_id, portal_id);
@@ -1806,10 +1812,8 @@ found:
 					    &client_salen);
 					if (client_fd < 0)
 						log_err(1, "accept");
-					if (client_salen < client_sa.ss_len)
-						log_errx(1, "salen %u < %u",
-						    client_salen,
-						    client_sa.ss_len);
+					assert(client_salen >= client_sa.ss_len);
+
 					handle_connection(portal, client_fd,
 					    (struct sockaddr *)&client_sa,
 					    dont_fork);
