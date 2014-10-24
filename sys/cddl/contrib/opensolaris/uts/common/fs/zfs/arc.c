@@ -2500,6 +2500,9 @@ arc_reclaim_needed(uint64_t reserve)
 	}
 
 #ifdef sun
+	if (needfree)
+		return (1);
+
 	/*
 	 * take 'desfree' extra pages, so we reclaim sooner, rather than later
 	 */
