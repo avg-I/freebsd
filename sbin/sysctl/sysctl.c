@@ -664,12 +664,12 @@ S_bios_smap_xattr(size_t l2, void *p)
 #endif
 
 static int
-S_sensor(int l2, void *p)
+S_sensor(size_t l2, void *p)
 {
 	struct sensor *s = (struct sensor *)p;
 
 	if (l2 != sizeof(*s)) {
-		warnx("S_sensor %d != %lu", l2, (unsigned long)sizeof(*s));
+		warnx("S_sensor %zu != %zu", l2, sizeof(*s));
 		return (1);
 	}
 
