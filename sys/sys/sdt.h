@@ -281,14 +281,14 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	SDT_PROBE_ARGTYPE(prov, mod, func, name, 5, arg5, xarg5);	\
 	SDT_PROBE_ARGTYPE(prov, mod, func, name, 6, arg6, xarg6)
 
+#ifndef __amd64__
+
 #define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	do {	\
 	if (sdt_##prov##_##mod##_##func##_##name->id)				\
 		(*sdt_probe_func)(sdt_##prov##_##mod##_##func##_##name->id,	\
 		    (uintptr_t) arg0, (uintptr_t) arg1, (uintptr_t) arg2,	\
 		    (uintptr_t) arg3, (uintptr_t) arg4);			\
 } while (0)
-
-#ifndef __amd64__
 
 #define	SDT_PROBE0(prov, mod, func, name)				\
 	SDT_PROBE(prov, mod, func, name, 0, 0, 0, 0, 0)
@@ -342,165 +342,98 @@ void sdt_probe_stub(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
 #else /*__amd64__*/
 
 struct sdt_callplace {
-	SLIST_ENTRY(sdt_callplace)	link;
-	LIST_ENTRY(sdt_callplace)	hash_link;
-	struct sdt_probe		*probe;
-	uintptr_t			func_addr;
-	uintptr_t			call_addr;
-	uint32_t			call_size;
+	uintptr_t	offset;
+	char		name[0];
 };
 
 SET_DECLARE(sdt_calls, struct sdt_callplace);
-
-#define SDT_PROBE_FUNC_(fname)	__asm__("				\
-	.global " #fname "\n						\
-	.comm " #fname ", 1\n						\
-	.type " #fname ", @function\n					\
-")
-#define	SDT_PROBE_FUNC(fname)	SDT_PROBE_FUNC_(fname)
 
 #define SDT_GEN_FNAME_(prov, mod, func, name)				\
 	__dtrace_sdt_call_##prov##_##mod##_##func##_##name
 #define SDT_GEN_FNAME(prov, mod, func, name)				\
 	SDT_GEN_FNAME_(prov, mod, func, name)
-#define SDT_GEN_PNAME_(prov, mod, func, name)				\
-	sdt_##prov##_##mod##_##func##_##name
-#define SDT_GEN_PNAME(prov, mod, func, name)				\
-	SDT_GEN_PNAME_(prov, mod, func, name)
-
-#define SDT_CALL_START()	__asm__("567:")
-#define STD_CALL_END_(probe, fname)	__asm__("			\
-	568:\n								\
-	.pushsection sdt_call_placess, \"a\"\n				\
-	.align 8\n							\
-	569:\n								\
-	.quad 0\n							\
-	.quad 0\n							\
-	.quad 0\n							\
-	.quad " #probe "\n						\
-	.quad " #fname "\n						\
-	.quad 567b\n							\
-	.long 568b - 567b\n						\
-	.popsection\n							\
-	.pushsection set_sdt_calls, \"a\"\n				\
-	.quad 569b\n							\
-	.popsection\n							\
-	.global __start_set_sdt_calls\n					\
-	.global __stop_set_sdt_calls\n					\
-")
-#define STD_CALL_END(probe, fname)	STD_CALL_END_(probe, fname)
 
 #define SDT_PROBE0(prov, mod, func, name)	do {			\
 	extern void SDT_GEN_FNAME(prov, mod, func, name)(void);		\
-	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));		\
-	SDT_CALL_START();						\
 	SDT_GEN_FNAME(prov, mod, func, name)();				\
-	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
-	    SDT_GEN_FNAME(prov, mod, func, name));			\
 } while (0)
 
 #define SDT_PROBE1(prov, mod, func, name, arg0)	do {			\
 	extern void SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t);	\
-	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));		\
-	SDT_CALL_START();						\
 	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0);		\
-	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
-	    SDT_GEN_FNAME(prov, mod, func, name));			\
 } while (0)
 
 #define SDT_PROBE2(prov, mod, func, name, arg0, arg1)	do {		\
 	extern void SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t,	\
 	    uintptr_t);							\
-	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));		\
-	SDT_CALL_START();						\
 	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1);						\
-	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
-	    SDT_GEN_FNAME(prov, mod, func, name));			\
 } while (0)
 
 #define SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2)	do {	\
 	extern void							\
-	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,	\
 	    uintptr_t);							\
-	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
-	SDT_CALL_START();						\
-	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2);				\
-	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
-	    SDT_GEN_FNAME(prov, mod, func, name));	\
 } while (0)
 
 #define SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3)	\
-	do {								\
+    do {								\
 	extern void							\
-	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,	\
 	    uintptr_t, uintptr_t);					\
-	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
-	SDT_CALL_START();						\
-	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3);		\
-	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
-	    SDT_GEN_FNAME(prov, mod, func, name));	\
 } while (0)
 
 #define SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
-	do {	\
+    do {								\
 	extern void							\
-	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,	\
 	    uintptr_t, uintptr_t, uintptr_t);				\
-	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
-	SDT_CALL_START();						\
-	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
 	    (uintptr_t)arg4);						\
-	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
-	    SDT_GEN_FNAME(prov, mod, func, name));	\
 } while (0)
 
 #define SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
-	    arg5)	do {						\
+    arg5)								\
+    do {								\
 	extern void							\
-	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,	\
 	    uintptr_t, uintptr_t, uintptr_t, uintptr_t); 		\
-	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
-	SDT_CALL_START();						\
-	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
 	    (uintptr_t)arg4, (uintptr_t)arg5);				\
-	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
-	    SDT_GEN_FNAME(prov, mod, func, name));	\
 } while (0)
 
 #define SDT_PROBE7(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
-	    arg5, arg6)	do {						\
+    arg5, arg6)								\
+    do {								\
 	extern void							\
-	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,	\
 	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);	\
-	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
-	SDT_CALL_START();						\
-	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
 	    (uintptr_t)arg4, (uintptr_t)arg5, (uintptr_t)arg6);		\
-	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
-	    SDT_GEN_FNAME(prov, mod, func, name));	\
 } while (0)
 
 #define SDT_PROBE8(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
-	    arg5, arg6, arg7)	do {					\
+    arg5, arg6, arg7)							\
+    do {								\
 	extern void							\
-	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,\
+	    SDT_GEN_FNAME(prov, mod, func, name)(uintptr_t, uintptr_t,	\
 	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,	\
 	    uintptr_t);							\
-	SDT_PROBE_FUNC(SDT_GEN_FNAME(prov, mod, func, name));\
-	SDT_CALL_START();						\
-	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,\
+	SDT_GEN_FNAME(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
 	    (uintptr_t)arg4, (uintptr_t)arg5, (uintptr_t)arg6,		\
 	    (uintptr_t)arg7);						\
-	STD_CALL_END(SDT_GEN_PNAME(prov, mod, func, name),		\
-	    SDT_GEN_FNAME(prov, mod, func, name));	\
 } while (0)
+
+#define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
+    SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
 
 #endif /*__amd64__*/
 

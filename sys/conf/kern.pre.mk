@@ -176,11 +176,17 @@ SYSTEM_CFILES= config.c env.c hints.c vnode_if.c
 SYSTEM_DEP= Makefile ${SYSTEM_OBJS}
 SYSTEM_OBJS= locore.o ${MDOBJS} ${OBJS}
 SYSTEM_OBJS+= ${SYSTEM_CFILES:.c=.o}
-SYSTEM_OBJS+= hack.So
-SYSTEM_LD= @${LD} -Bdynamic -T ${LDSCRIPT} ${_LDFLAGS} --no-warn-mismatch \
+.if ${MK_CTF} != "no"
+SDT_ASFILE= sdt_stubs.s
+SDT_OBJ= ${SDT_ASFILE:.s=.o}
+.else
+SDT_OBJ=
+.endif
+SYSTEM_LD_PRE= ${LD} -r ${SYSTEM_OBJS} -o ${.TARGET}.reloc
+SYSTEM_LD= ${LD} -Bdynamic -T ${LDSCRIPT} ${_LDFLAGS} --no-warn-mismatch \
 	-warn-common -export-dynamic -dynamic-linker /red/herring \
-	-o ${.TARGET} -X ${SYSTEM_OBJS} vers.o
-SYSTEM_LD_TAIL= @${OBJCOPY} --strip-symbol gcc2_compiled. ${.TARGET} ; \
+	-o ${.TARGET} -X ${.TARGET}.reloc ${SDT_OBJ} vers.o hack.So
+SYSTEM_LD_TAIL= ${OBJCOPY} --strip-symbol gcc2_compiled. ${.TARGET} ; \
 	${SIZE} ${.TARGET} ; chmod 755 ${.TARGET}
 SYSTEM_DEP+= ${LDSCRIPT}
 
