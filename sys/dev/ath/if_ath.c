@@ -510,6 +510,60 @@ ath_setup_hal_config(struct ath_softc *sc, HAL_OPS_CONFIG *ah_config)
 
 }
 
+/*
+ * Attempt to fetch the MAC address from the kernel environment.
+ *
+ * Returns 0, macaddr in macaddr if successful; -1 otherwise.
+ */
+static int
+ath_fetch_mac_kenv(struct ath_softc *sc, uint8_t *macaddr)
+{
+	char devid_str[32];
+	int local_mac = 0;
+	char *local_macstr;
+
+	/*
+	 * Fetch from the kenv rather than using hints.
+	 *
+	 * Hints would be nice but the transition to dynamic
+	 * hints/kenv doesn't happen early enough for this
+	 * to work reliably (eg on anything embedded.)
+	 */
+	snprintf(devid_str, 32, "hint.%s.%d.macaddr",
+	    device_get_name(sc->sc_dev),
+	    device_get_unit(sc->sc_dev));
+
+	if ((local_macstr = kern_getenv(devid_str)) != NULL) {
+		uint32_t tmpmac[ETHER_ADDR_LEN];
+		int count;
+		int i;
+
+		/* Have a MAC address; should use it */
+		device_printf(sc->sc_dev,
+		    "Overriding MAC address from environment: '%s'\n",
+		    local_macstr);
+
+		/* Extract out the MAC address */
+		count = sscanf(local_macstr, "%x%*c%x%*c%x%*c%x%*c%x%*c%x",
+		    &tmpmac[0], &tmpmac[1],
+		    &tmpmac[2], &tmpmac[3],
+		    &tmpmac[4], &tmpmac[5]);
+		if (count == 6) {
+			/* Valid! */
+			local_mac = 1;
+			for (i = 0; i < ETHER_ADDR_LEN; i++)
+				macaddr[i] = tmpmac[i];
+		}
+		/* Done! */
+		freeenv(local_macstr);
+		local_macstr = NULL;
+	}
+
+	if (local_mac)
+		return (0);
+	return (-1);
+}
+
 #define	HAL_MODE_HT20 (HAL_MODE_11NG_HT20 | HAL_MODE_11NA_HT20)
 #define	HAL_MODE_HT40 \
 	(HAL_MODE_11NG_HT40PLUS | HAL_MODE_11NG_HT40MINUS | \
@@ -1149,8 +1203,14 @@ ath_attach(u_int16_t devid, struct ath_softc *sc)
 	 */
 	sc->sc_hasveol = ath_hal_hasveol(ah);
 
-	/* get mac address from hardware */
-	ath_hal_getmac(ah, macaddr);
+	/* get mac address from kenv first, then hardware */
+	if (ath_fetch_mac_kenv(sc, macaddr) == 0) {
+		/* Tell the HAL now about the new MAC */
+		ath_hal_setmac(ah, macaddr);
+	} else {
+		ath_hal_getmac(ah, macaddr);
+	}
+
 	if (sc->sc_hasbmask)
 		ath_hal_getbssidmask(ah, sc->sc_hwbssidmask);
 
@@ -1812,7 +1872,10 @@ ath_suspend(struct ath_softc *sc)
 	 */
 	ath_hal_intrset(sc->sc_ah, 0);
 	taskqueue_block(sc->sc_tq);
-	callout_drain(&sc->sc_cal_ch);
+
+	ATH_LOCK(sc);
+	callout_stop(&sc->sc_cal_ch);
+	ATH_UNLOCK(sc);
 
 	/*
 	 * XXX ensure sc_invalid is 1
@@ -2483,11 +2546,11 @@ ath_init(void *arg)
 	 * state cached in the driver.
 	 */
 	sc->sc_diversity = ath_hal_getdiversity(ah);
-	sc->sc_lastlongcal = 0;
+	sc->sc_lastlongcal = ticks;
 	sc->sc_resetcal = 1;
 	sc->sc_lastcalreset = 0;
-	sc->sc_lastani = 0;
-	sc->sc_lastshortcal = 0;
+	sc->sc_lastani = ticks;
+	sc->sc_lastshortcal = ticks;
 	sc->sc_doresetcal = AH_FALSE;
 	/*
 	 * Beacon timers were cleared here; give ath_newstate()
@@ -5599,6 +5662,8 @@ ath_calibrate(void *arg)
 	HAL_BOOL aniCal, shortCal = AH_FALSE;
 	int nextcal;
 
+	ATH_LOCK_ASSERT(sc);
+
 	/*
 	 * Force the hardware awake for ANI work.
 	 */
@@ -5888,12 +5953,17 @@ ath_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 	 * Now, wake the thing up.
 	 */
 	ath_power_set_power_state(sc, HAL_PM_AWAKE);
+
+	/*
+	 * And stop the calibration callout whilst we have
+	 * ATH_LOCK held.
+	 */
+	callout_stop(&sc->sc_cal_ch);
 	ATH_UNLOCK(sc);
 
 	if (ostate == IEEE80211_S_CSA && nstate == IEEE80211_S_RUN)
 		csa_run_transition = 1;
 
-	callout_drain(&sc->sc_cal_ch);
 	ath_hal_setledstate(ah, leds[nstate]);	/* set LED */
 
 	if (nstate == IEEE80211_S_SCAN) {
@@ -6084,7 +6154,6 @@ ath_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 		ATH_LOCK(sc);
 		ath_power_setselfgen(sc, HAL_PM_AWAKE);
 		ath_power_setpower(sc, HAL_PM_AWAKE);
-		ATH_UNLOCK(sc);
 
 		/*
 		 * Finally, start any timers and the task q thread
@@ -6097,6 +6166,7 @@ ath_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 			DPRINTF(sc, ATH_DEBUG_CALIBRATE,
 			    "%s: calibration disabled\n", __func__);
 		}
+		ATH_UNLOCK(sc);
 
 		taskqueue_unblock(sc->sc_tq);
 	} else if (nstate == IEEE80211_S_INIT) {
@@ -6457,13 +6527,13 @@ ath_watchdog(void *arg)
 	struct ath_softc *sc = arg;
 	int do_reset = 0;
 
+	ATH_LOCK_ASSERT(sc);
+
 	if (sc->sc_wd_timer != 0 && --sc->sc_wd_timer == 0) {
 		struct ifnet *ifp = sc->sc_ifp;
 		uint32_t hangs;
 
-		ATH_LOCK(sc);
 		ath_power_set_power_state(sc, HAL_PM_AWAKE);
-		ATH_UNLOCK(sc);
 
 		if (ath_hal_gethangstate(sc->sc_ah, 0xffff, &hangs) &&
 		    hangs != 0) {
@@ -6475,9 +6545,7 @@ ath_watchdog(void *arg)
 		if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 		sc->sc_stats.ast_watchdog++;
 
-		ATH_LOCK(sc);
 		ath_power_restore_power_state(sc);
-		ATH_UNLOCK(sc);
 	}
 
 	/*
@@ -7016,7 +7084,7 @@ ath_tx_update_tim(struct ath_softc *sc, struct ieee80211_node *ni,
 		/*
 		 * Don't bother grabbing the lock unless the queue is empty.
 		 */
-		if (&an->an_swq_depth != 0)
+		if (an->an_swq_depth != 0)
 			return;
 
 		if (an->an_is_powersave &&
