@@ -127,7 +127,7 @@ get_pcb_td(struct thread *td)
 void *
 alloc_fpusave(int flags)
 {
-	struct pcb *res;
+	void *res;
 	struct savefpu_ymm *sf;
 
 	res = malloc(cpu_max_ext_state_size, M_DEVBUF, flags);
@@ -219,7 +219,6 @@ cpu_fork(td1, p2, td2, flags)
 	 * return address on stack.  These are the kernel mode register values.
 	 */
 	pmap2 = vmspace_pmap(p2->p_vmspace);
-	pcb2->pcb_cr3 = pmap2->pm_cr3;
 	pcb2->pcb_r12 = (register_t)fork_return;	/* fork_trampoline argument */
 	pcb2->pcb_rbp = 0;
 	pcb2->pcb_rsp = (register_t)td2->td_frame - sizeof(void *);
@@ -477,7 +476,6 @@ cpu_set_upcall(struct thread *td, struct thread *td0)
 	pcb2->pcb_rip = (register_t)fork_trampoline;
 	/*
 	 * If we didn't copy the pcb, we'd need to do the following registers:
-	 * pcb2->pcb_cr3:	cloned above.
 	 * pcb2->pcb_dr*:	cloned above.
 	 * pcb2->pcb_savefpu:	cloned above.
 	 * pcb2->pcb_onfault:	cloned above (always NULL here?).

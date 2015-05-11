@@ -471,7 +471,7 @@ ksem_create(struct thread *td, const char *name, semid_t *semidp, mode_t mode,
 	 */
 	error = ksem_create_copyout_semid(td, semidp, fd, compat32);
 	if (error) {
-		fdclose(fdp, fp, fd, td);
+		fdclose(td, fp, fd);
 		fdrop(fp, td);
 		return (error);
 	}
@@ -491,7 +491,7 @@ ksem_create(struct thread *td, const char *name, semid_t *semidp, mode_t mode,
 		if (error == 0 && path[0] != '/')
 			error = EINVAL;
 		if (error) {
-			fdclose(fdp, fp, fd, td);
+			fdclose(td, fp, fd);
 			fdrop(fp, td);
 			free(path, M_KSEM);
 			return (error);
@@ -542,7 +542,7 @@ ksem_create(struct thread *td, const char *name, semid_t *semidp, mode_t mode,
 
 	if (error) {
 		KASSERT(ks == NULL, ("ksem_create error with a ksem"));
-		fdclose(fdp, fp, fd, td);
+		fdclose(td, fp, fd);
 		fdrop(fp, td);
 		return (error);
 	}
@@ -993,11 +993,11 @@ ksem_module_init(void)
 	p31b_setcfg(CTL_P1003_1B_SEM_NSEMS_MAX, SEM_MAX);
 	p31b_setcfg(CTL_P1003_1B_SEM_VALUE_MAX, SEM_VALUE_MAX);
 
-	error = syscall_helper_register(ksem_syscalls);
+	error = syscall_helper_register(ksem_syscalls, SY_THR_STATIC_KLD);
 	if (error)
 		return (error);
 #ifdef COMPAT_FREEBSD32
-	error = syscall32_helper_register(ksem32_syscalls);
+	error = syscall32_helper_register(ksem32_syscalls, SY_THR_STATIC_KLD);
 	if (error)
 		return (error);
 #endif

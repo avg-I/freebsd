@@ -65,6 +65,7 @@ __FBSDID("$FreeBSD$");
 #ifdef RADIX_MPATH
 #include <net/radix_mpath.h>
 #endif
+#include <net/rss_config.h>
 #include <net/vnet.h>
 
 #include <netinet/in.h>
@@ -89,8 +90,6 @@ __FBSDID("$FreeBSD$");
 #include <machine/in_cksum.h>
 
 #include <security/mac/mac_framework.h>
-
-VNET_DEFINE(u_short, ip_id);
 
 #ifdef MBUF_STRESS_TEST
 static int mbuf_frag_size = 0;
@@ -147,11 +146,9 @@ ip_output(struct mbuf *m, struct mbuf *opt, struct route *ro, int flags,
 	if (inp != NULL) {
 		INP_LOCK_ASSERT(inp);
 		M_SETFIB(m, inp->inp_inc.inc_fibnum);
-		if (((flags & IP_NODEFAULTFLOWID) == 0) &&
-		    inp->inp_flags & (INP_HW_FLOWID|INP_SW_FLOWID)) {
+		if ((flags & IP_NODEFAULTFLOWID) == 0) {
 			m->m_pkthdr.flowid = inp->inp_flowid;
 			M_HASHTYPE_SET(m, inp->inp_flowtype);
-			m->m_flags |= M_FLOWID;
 		}
 	}
 
@@ -175,21 +172,10 @@ ip_output(struct mbuf *m, struct mbuf *opt, struct route *ro, int flags,
 	ip_len = ntohs(ip->ip_len);
 	ip_off = ntohs(ip->ip_off);
 
-	/*
-	 * Fill in IP header.  If we are not allowing fragmentation,
-	 * then the ip_id field is meaningless, but we don't set it
-	 * to zero.  Doing so causes various problems when devices along
-	 * the path (routers, load balancers, firewalls, etc.) illegally
-	 * disable DF on our packet.  Note that a 16-bit counter
-	 * will wrap around in less than 10 seconds at 100 Mbit/s on a
-	 * medium with MTU 1500.  See Steven M. Bellovin, "A Technique
-	 * for Counting NATted Hosts", Proc. IMW'02, available at
-	 * <http://www.cs.columbia.edu/~smb/papers/fnat.pdf>.
-	 */
 	if ((flags & (IP_FORWARDING|IP_RAWOUTPUT)) == 0) {
 		ip->ip_v = IPVERSION;
 		ip->ip_hl = hlen >> 2;
-		ip->ip_id = ip_newid();
+		ip_fillid(ip);
 		IPSTAT_INC(ips_localout);
 	} else {
 		/* Header already set, fetch hlen from there */
@@ -322,20 +308,10 @@ again:
 	 * Calculate MTU.  If we have a route that is up, use that,
 	 * otherwise use the interface's MTU.
 	 */
-	if (rte != NULL && (rte->rt_flags & (RTF_UP|RTF_HOST))) {
-		/*
-		 * This case can happen if the user changed the MTU
-		 * of an interface after enabling IP on it.  Because
-		 * most netifs don't keep track of routes pointing to
-		 * them, there is no way for one to update all its
-		 * routes when the MTU is changed.
-		 */
-		if (rte->rt_mtu > ifp->if_mtu)
-			rte->rt_mtu = ifp->if_mtu;
+	if (rte != NULL && (rte->rt_flags & (RTF_UP|RTF_HOST)))
 		mtu = rte->rt_mtu;
-	} else {
+	else
 		mtu = ifp->if_mtu;
-	}
 	/* Catch a possible divide by zero later. */
 	KASSERT(mtu > 0, ("%s: mtu %d <= 0, rte=%p (rt_flags=0x%08x) ifp=%p",
 	    __func__, mtu, rte, (rte != NULL) ? rte->rt_flags : 0, ifp));
@@ -473,7 +449,7 @@ again:
 
 sendit:
 #ifdef IPSEC
-	switch(ip_ipsec_output(&m, inp, &flags, &error)) {
+	switch(ip_ipsec_output(&m, inp, &error)) {
 	case 1:
 		goto bad;
 	case -1:
@@ -754,10 +730,8 @@ ip_fragment(struct ip *ip, struct mbuf **m_frag, int mtu,
 		 * be less than the receiver's page size ?
 		 */
 		int newlen;
-		struct mbuf *m;
 
-		for (m = m0, off = 0; m && (off+m->m_len) <= mtu; m = m->m_next)
-			off += m->m_len;
+		off = MIN(mtu, m0->m_pkthdr.len);
 
 		/*
 		 * firstlen (off - hlen) must be aligned on an
@@ -800,7 +774,19 @@ smart_frag_failure:
 			IPSTAT_INC(ips_odropped);
 			goto done;
 		}
-		m->m_flags |= (m0->m_flags & M_MCAST);
+		/*
+		 * Make sure the complete packet header gets copied
+		 * from the originating mbuf to the newly created
+		 * mbuf. This also ensures that existing firewall
+		 * classification(s), VLAN tags and so on get copied
+		 * to the resulting fragmented packet(s):
+		 */
+		if (m_dup_pkthdr(m, m0, M_NOWAIT) == 0) {
+			m_free(m);
+			error = ENOBUFS;
+			IPSTAT_INC(ips_odropped);
+			goto done;
+		}
 		/*
 		 * In the first mbuf, leave room for the link header, then
 		 * copy the original IP header including options. The payload
@@ -830,11 +816,9 @@ smart_frag_failure:
 			goto done;
 		}
 		m->m_pkthdr.len = mhlen + len;
-		m->m_pkthdr.rcvif = NULL;
 #ifdef MAC
 		mac_netinet_fragment(m0, m);
 #endif
-		m->m_pkthdr.csum_flags = m0->m_pkthdr.csum_flags;
 		mhip->ip_off = htons(mhip->ip_off);
 		mhip->ip_sum = 0;
 		if (m->m_pkthdr.csum_flags & CSUM_IP & ~if_hwassist_flags) {
@@ -991,7 +975,6 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 		case IP_RECVDSTADDR:
 		case IP_RECVTTL:
 		case IP_RECVIF:
-		case IP_FAITH:
 		case IP_ONESBCAST:
 		case IP_DONTFRAG:
 		case IP_RECVTOS:
@@ -1056,10 +1039,6 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 
 			case IP_RECVIF:
 				OPTSET(INP_RECVIF);
-				break;
-
-			case IP_FAITH:
-				OPTSET(INP_FAITH);
 				break;
 
 			case IP_ONESBCAST:
@@ -1200,7 +1179,6 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 		case IP_RECVTTL:
 		case IP_RECVIF:
 		case IP_PORTRANGE:
-		case IP_FAITH:
 		case IP_ONESBCAST:
 		case IP_DONTFRAG:
 		case IP_BINDANY:
@@ -1257,10 +1235,6 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 					optval = IP_PORTRANGE_LOW;
 				else
 					optval = 0;
-				break;
-
-			case IP_FAITH:
-				optval = OPTBIT(INP_FAITH);
 				break;
 
 			case IP_ONESBCAST:

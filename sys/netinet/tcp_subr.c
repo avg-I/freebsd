@@ -138,8 +138,8 @@ sysctl_net_inet_tcp_mss_check(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-SYSCTL_VNET_PROC(_net_inet_tcp, TCPCTL_MSSDFLT, mssdflt,
-    CTLTYPE_INT|CTLFLAG_RW, &VNET_NAME(tcp_mssdflt), 0,
+SYSCTL_PROC(_net_inet_tcp, TCPCTL_MSSDFLT, mssdflt,
+    CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW, &VNET_NAME(tcp_mssdflt), 0,
     &sysctl_net_inet_tcp_mss_check, "I",
     "Default TCP Maximum Segment Size");
 
@@ -160,8 +160,8 @@ sysctl_net_inet_tcp_mss_v6_check(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-SYSCTL_VNET_PROC(_net_inet_tcp, TCPCTL_V6MSSDFLT, v6mssdflt,
-    CTLTYPE_INT|CTLFLAG_RW, &VNET_NAME(tcp_v6mssdflt), 0,
+SYSCTL_PROC(_net_inet_tcp, TCPCTL_V6MSSDFLT, v6mssdflt,
+    CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW, &VNET_NAME(tcp_v6mssdflt), 0,
     &sysctl_net_inet_tcp_mss_v6_check, "I",
    "Default TCP Maximum Segment Size for IPv6");
 #endif /* INET6 */
@@ -175,12 +175,12 @@ SYSCTL_VNET_PROC(_net_inet_tcp, TCPCTL_V6MSSDFLT, v6mssdflt,
  * checking. This setting prevents us from sending too small packets.
  */
 VNET_DEFINE(int, tcp_minmss) = TCP_MINMSS;
-SYSCTL_VNET_INT(_net_inet_tcp, OID_AUTO, minmss, CTLFLAG_RW,
+SYSCTL_INT(_net_inet_tcp, OID_AUTO, minmss, CTLFLAG_VNET | CTLFLAG_RW,
      &VNET_NAME(tcp_minmss), 0,
     "Minimum TCP Maximum Segment Size");
 
 VNET_DEFINE(int, tcp_do_rfc1323) = 1;
-SYSCTL_VNET_INT(_net_inet_tcp, TCPCTL_DO_RFC1323, rfc1323, CTLFLAG_RW,
+SYSCTL_INT(_net_inet_tcp, TCPCTL_DO_RFC1323, rfc1323, CTLFLAG_VNET | CTLFLAG_RW,
     &VNET_NAME(tcp_do_rfc1323), 0,
     "Enable rfc1323 (high performance TCP) extensions");
 
@@ -196,18 +196,18 @@ static int	do_tcpdrain = 1;
 SYSCTL_INT(_net_inet_tcp, OID_AUTO, do_tcpdrain, CTLFLAG_RW, &do_tcpdrain, 0,
     "Enable tcp_drain routine for extra help when low on mbufs");
 
-SYSCTL_VNET_UINT(_net_inet_tcp, OID_AUTO, pcbcount, CTLFLAG_RD,
+SYSCTL_UINT(_net_inet_tcp, OID_AUTO, pcbcount, CTLFLAG_VNET | CTLFLAG_RD,
     &VNET_NAME(tcbinfo.ipi_count), 0, "Number of active PCBs");
 
 static VNET_DEFINE(int, icmp_may_rst) = 1;
 #define	V_icmp_may_rst			VNET(icmp_may_rst)
-SYSCTL_VNET_INT(_net_inet_tcp, OID_AUTO, icmp_may_rst, CTLFLAG_RW,
+SYSCTL_INT(_net_inet_tcp, OID_AUTO, icmp_may_rst, CTLFLAG_VNET | CTLFLAG_RW,
     &VNET_NAME(icmp_may_rst), 0,
     "Certain ICMP unreachable messages may abort connections in SYN_SENT");
 
 static VNET_DEFINE(int, tcp_isn_reseed_interval) = 0;
 #define	V_tcp_isn_reseed_interval	VNET(tcp_isn_reseed_interval)
-SYSCTL_VNET_INT(_net_inet_tcp, OID_AUTO, isn_reseed_interval, CTLFLAG_RW,
+SYSCTL_INT(_net_inet_tcp, OID_AUTO, isn_reseed_interval, CTLFLAG_VNET | CTLFLAG_RW,
     &VNET_NAME(tcp_isn_reseed_interval), 0,
     "Seconds between reseeding of ISN secret");
 
@@ -230,6 +230,7 @@ static struct inpcb *tcp_notify(struct inpcb *, int);
 static struct inpcb *tcp_mtudisc_notify(struct inpcb *, int);
 static char *	tcp_log_addr(struct in_conninfo *inc, struct tcphdr *th,
 		    void *ip4hdr, const void *ip6hdr);
+static void	tcp_timer_discard(struct tcpcb *, uint32_t);
 
 /*
  * Target size of TCP PCB hash tables. Must be a power of two.
@@ -801,7 +802,13 @@ tcp_newtcpcb(struct inpcb *inp)
 	if (V_tcp_do_sack)
 		tp->t_flags |= TF_SACK_PERMIT;
 	TAILQ_INIT(&tp->snd_holes);
-	tp->t_inpcb = inp;	/* XXX */
+	/*
+	 * The tcpcb will hold a reference on its inpcb until tcp_discardcb()
+	 * is called.
+	 */
+	in_pcbref(inp);	/* Reference for tcpcb */
+	tp->t_inpcb = inp;
+
 	/*
 	 * Init srtt to TCPTV_SRTTBASE (0), so we can tell that we have no
 	 * rtt estimate.  Set rttvar so that srtt + 4 * rttvar gives
@@ -920,6 +927,7 @@ tcp_discardcb(struct tcpcb *tp)
 #ifdef INET6
 	int isipv6 = (inp->inp_vflag & INP_IPV6) != 0;
 #endif /* INET6 */
+	int released;
 
 	INP_WLOCK_ASSERT(inp);
 
@@ -927,22 +935,15 @@ tcp_discardcb(struct tcpcb *tp)
 	 * Make sure that all of our timers are stopped before we delete the
 	 * PCB.
 	 *
-	 * XXXRW: Really, we would like to use callout_drain() here in order
-	 * to avoid races experienced in tcp_timer.c where a timer is already
-	 * executing at this point.  However, we can't, both because we're
-	 * running in a context where we can't sleep, and also because we
-	 * hold locks required by the timers.  What we instead need to do is
-	 * test to see if callout_drain() is required, and if so, defer some
-	 * portion of the remainder of tcp_discardcb() to an asynchronous
-	 * context that can callout_drain() and then continue.  Some care
-	 * will be required to ensure that no further processing takes place
-	 * on the tcpcb, even though it hasn't been freed (a flag?).
+	 * If stopping a timer fails, we schedule a discard function in same
+	 * callout, and the last discard function called will take care of
+	 * deleting the tcpcb.
 	 */
-	callout_stop(&tp->t_timers->tt_rexmt);
-	callout_stop(&tp->t_timers->tt_persist);
-	callout_stop(&tp->t_timers->tt_keep);
-	callout_stop(&tp->t_timers->tt_2msl);
-	callout_stop(&tp->t_timers->tt_delack);
+	tcp_timer_stop(tp, TT_REXMT);
+	tcp_timer_stop(tp, TT_PERSIST);
+	tcp_timer_stop(tp, TT_KEEP);
+	tcp_timer_stop(tp, TT_2MSL);
+	tcp_timer_stop(tp, TT_DELACK);
 
 	/*
 	 * If we got enough samples through the srtt filter,
@@ -1019,8 +1020,80 @@ tcp_discardcb(struct tcpcb *tp)
 
 	CC_ALGO(tp) = NULL;
 	inp->inp_ppcb = NULL;
-	tp->t_inpcb = NULL;
-	uma_zfree(V_tcpcb_zone, tp);
+	if ((tp->t_timers->tt_flags & TT_MASK) == 0) {
+		/* We own the last reference on tcpcb, let's free it. */
+		tp->t_inpcb = NULL;
+		uma_zfree(V_tcpcb_zone, tp);
+		released = in_pcbrele_wlocked(inp);
+		KASSERT(!released, ("%s: inp %p should not have been released "
+			"here", __func__, inp));
+	}
+}
+
+void
+tcp_timer_2msl_discard(void *xtp)
+{
+
+	tcp_timer_discard((struct tcpcb *)xtp, TT_2MSL);
+}
+
+void
+tcp_timer_keep_discard(void *xtp)
+{
+
+	tcp_timer_discard((struct tcpcb *)xtp, TT_KEEP);
+}
+
+void
+tcp_timer_persist_discard(void *xtp)
+{
+
+	tcp_timer_discard((struct tcpcb *)xtp, TT_PERSIST);
+}
+
+void
+tcp_timer_rexmt_discard(void *xtp)
+{
+
+	tcp_timer_discard((struct tcpcb *)xtp, TT_REXMT);
+}
+
+void
+tcp_timer_delack_discard(void *xtp)
+{
+
+	tcp_timer_discard((struct tcpcb *)xtp, TT_DELACK);
+}
+
+void
+tcp_timer_discard(struct tcpcb *tp, uint32_t timer_type)
+{
+	struct inpcb *inp;
+
+	CURVNET_SET(tp->t_vnet);
+	INP_INFO_WLOCK(&V_tcbinfo);
+	inp = tp->t_inpcb;
+	KASSERT(inp != NULL, ("%s: tp %p tp->t_inpcb == NULL",
+		__func__, tp));
+	INP_WLOCK(inp);
+	KASSERT((tp->t_timers->tt_flags & TT_STOPPED) != 0,
+		("%s: tcpcb has to be stopped here", __func__));
+	KASSERT((tp->t_timers->tt_flags & timer_type) != 0,
+		("%s: discard callout should be running", __func__));
+	tp->t_timers->tt_flags &= ~timer_type;
+	if ((tp->t_timers->tt_flags & TT_MASK) == 0) {
+		/* We own the last reference on this tcpcb, let's free it. */
+		tp->t_inpcb = NULL;
+		uma_zfree(V_tcpcb_zone, tp);
+		if (in_pcbrele_wlocked(inp)) {
+			INP_INFO_WUNLOCK(&V_tcbinfo);
+			CURVNET_RESTORE();
+			return;
+		}
+	}
+	INP_WUNLOCK(inp);
+	INP_INFO_WUNLOCK(&V_tcbinfo);
+	CURVNET_RESTORE();
 }
 
 /*
@@ -1430,11 +1503,6 @@ tcp_ctlinput(int cmd, struct sockaddr *sa, void *vip)
 	else if (PRC_IS_REDIRECT(cmd))
 		return;
 	/*
-	 * Source quench is depreciated.
-	 */
-	else if (cmd == PRC_QUENCH)
-		return;
-	/*
 	 * Hostdead is ugly because it goes linearly through all PCBs.
 	 * XXX: We never get this from ICMP, otherwise it makes an
 	 * excellent DoS attack on machines with many connections.
@@ -1538,9 +1606,6 @@ tcp6_ctlinput(int cmd, struct sockaddr *sa, void *d)
 		notify = tcp_mtudisc_notify;
 	else if (!PRC_IS_REDIRECT(cmd) &&
 		 ((unsigned)cmd >= PRC_NCMDS || inet6ctlerrmap[cmd] == 0))
-		return;
-	/* Source quench is depreciated. */
-	else if (cmd == PRC_QUENCH)
 		return;
 
 	/* if the parameter is from icmp6, decode it. */
@@ -2094,6 +2159,7 @@ tcp_signature_do_compute(struct mbuf *m, int len, int optlen,
 		break;
 #endif
 	default:
+		KEY_FREESAV(&sav);
 		return (-1);
 		/* NOTREACHED */
 		break;
@@ -2316,8 +2382,8 @@ sysctl_drop(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-SYSCTL_VNET_PROC(_net_inet_tcp, TCPCTL_DROP, drop,
-    CTLTYPE_STRUCT|CTLFLAG_WR|CTLFLAG_SKIP, NULL,
+SYSCTL_PROC(_net_inet_tcp, TCPCTL_DROP, drop,
+    CTLFLAG_VNET | CTLTYPE_STRUCT | CTLFLAG_WR | CTLFLAG_SKIP, NULL,
     0, sysctl_drop, "", "Drop TCP connection");
 
 /*

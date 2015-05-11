@@ -28,6 +28,19 @@ sub main {
 	extract_samples() if /^-X/;
     }
 
+    if ($#ARGV < 0) {
+	print STDERR "xolint [options] files ...\n";
+	print STDERR "    -c    invoke 'cpp' on input\n";
+	print STDERR "    -C flags   Pass flags to cpp\n";
+	print STDERR "    -d         Show debug output\n";
+	print STDERR "    -D         Extract xolint documentation\n";
+	print STDERR "    -I         Print xo_info_t data\n";
+	print STDERR "    -p         Print input data on errors\n";
+	print STDERR "    -V         Print vocabulary (list of tags)\n";
+	print STDERR "    -X         Print examples of invalid use\n";
+	exit(1);
+    }
+
     for $file (@ARGV) {
 	parse_file($file);
     }
@@ -269,9 +282,9 @@ sub check_format {
 		$last = $prev;
 		next;
 	    }
+	    $prev = $ch;
 	}
 
-	$prev = $ch;
 	$build[$phase] .= $ch;
     }
 
@@ -334,37 +347,83 @@ sub check_field {
     error("only one field role can be used (" . join(", ", @roles) . ")")
 	if $#roles > 0;
 
-    # Field is a note, label, or title
-    if ($field[0] =~ /[DLNT]/) {
+    # Field is a color, note, label, or title
+    if ($field[0] =~ /[CDLNT]/) {
 
-	#@ Potential missing slash after N, L, or T with format
+	#@ Potential missing slash after C, D, N, L, or T with format
 	#@     xo_emit("{T:%6.6s}\n", "Max");
 	#@ should be:
 	#@     xo_emit("{T:/%6.6s}\n", "Max");
 	#@ The "%6.6s" will be a literal, not a field format.  While
 	#@ it's possibly valid, it's likely a missing "/".
-	info("potential missing slash after N, L, or T with format")
+	info("potential missing slash after C, D, N, L, or T with format")
 	    if $field[1] =~ /%/;
 
-	#@ Format cannot be given when content is present (roles: DNLT)
-	#@    xo_emit("{T:Max/%6.6s}", "Max");
-	#@ Fields with the D, N, L, or T roles can't have both
-	#@ static literal content ("{T:Title}") and a
-	#@ format ("{T:/%s}").
+	#@ An encoding format cannot be given (roles: DNLT)
+	#@    xo_emit("{T:Max//%s}", "Max");
+	#@ Fields with the C, D, N, L, and T roles are not emitted in
+	#@ the 'encoding' style (JSON, XML), so an encoding format
+	#@ would make no sense.
+	error("encoding format cannot be given when content is present")
+	    if $field[3];
+    }
+
+    # Field is a color, decoration, label, or title
+    if ($field[0] =~ /[CDLN]/) {
+	#@ Format cannot be given when content is present (roles: CDLN)
+	#@    xo_emit("{N:Max/%6.6s}", "Max");
+	#@ Fields with the C, D, L, or N roles can't have both
+	#@ static literal content ("{L:Label}") and a
+	#@ format ("{L:/%s}").
 	#@ This error will also occur when the content has a backslash
 	#@ in it, like "{N:Type of I/O}"; backslashes should be escaped,
 	#@ like "{N:Type of I\\/O}".  Note the double backslash, one for
 	#@ handling 'C' strings, and one for libxo.
 	error("format cannot be given when content is present")
 	    if $field[1] && $field[2];
+    }
 
-	#@ An encoding format cannot be given (roles: DNLT)
-	#@    xo_emit("{T:Max//%s}", "Max");
-	#@ Fields with the D, N, L, and T roles are not emitted in
-	#@ the 'encoding' style (JSON, XML), so an encoding format
-	#@ would make no sense.
-	error("encoding format cannot be given when content is present")
-	    if $field[3];
+    # Field is a color/effect
+    if ($field[0] =~ /C/) {
+	if ($field[1]) {
+	    my $val;
+	    my @sub = split(/,/, $field[1]);
+	    grep { s/^\s*//; s/\s*$//; } @sub;
+
+	    for $val (@sub) {
+		if ($val =~ /^(default,black,red,green,yellow,blue,magenta,cyan,white)$/) {
+
+		    #@ Field has color without fg- or bg- (role: C)
+		    #@   xo_emit("{C:green}{:foo}{C:}", x);
+		    #@ Should be:
+		    #@   xo_emit("{C:fg-green}{:foo}{C:}", x);
+		    #@ Colors must be prefixed by either "fg-" or "bg-".
+		    error("Field has color without fg- or bg- (role: C)");
+
+		} elsif ($val =~ /^(fg|bg)-(default|black|red|green|yellow|blue|magenta|cyan|white)$/) {
+		    # color
+		} elsif ($val =~ /^(bold|underline)$/) {
+		} elsif ($val =~ /^(no-)?(bold|underline|inverse)$/) {
+		    # effect
+
+		} elsif ($val =~ /^(reset|normal)$/) {
+		    # effect also
+		} else {
+		    #@ Field has invalid color or effect (role: C)
+		    #@   xo_emit("{C:fg-purple,bold}{:foo}{C:gween}", x);
+		    #@ Should be:
+		    #@   xo_emit("{C:fg-red,bold}{:foo}{C:fg-green}", x);
+		    #@ The list of colors and effects are limited.  The
+		    #@ set of colors includes default, black, red, green,
+		    #@ yellow, blue, magenta, cyan, and white, which must
+		    #@ be prefixed by either "fg-" or "bg-".  Effects are
+		    #@ limited to bold, no-bold, underline, no-underline,
+		    #@ inverse, no-inverse, normal, and reset.  Values must
+		    #@ be separated by commas.
+		    error("Field has invalid color or effect (role: C) ($val)");
+		}
+	    }
+	}
     }
 
     # A value field
@@ -440,7 +499,7 @@ sub check_field {
 	#@ Should be:
 	#@     xo_emit("{D:((}{:good}{D:))}", "yes");
 	#@ This is minor, but fields should use proper roles.  Decoration
-	#@ fields are meant to hold puncuation and other characters used
+	#@ fields are meant to hold punctuation and other characters used
 	#@ to decorate the content, typically to make it more readable
 	#@ to human readers.
 	warn("decoration field contains invalid character")
@@ -527,7 +586,7 @@ sub check_field_format {
     #@ for non-strings.  This error may occur from a typo,
     #@ like "{:tag/%6..6d}" where only one period should be used.
     error("max width only valid for strings")
-	if $#chunks >= 2 && $fc =~ /[sS]/;
+	if $#chunks >= 2 && $fc !~ /[sS]/;
 }
 
 sub error {
