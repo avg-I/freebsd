@@ -73,6 +73,7 @@ __FBSDID("$FreeBSD$");
 #include <ddb/ddb.h>
 
 #include <machine/cpu.h>
+#include <machine/dump.h>
 #include <machine/pcb.h>
 #include <machine/smp.h>
 
@@ -153,7 +154,6 @@ static void poweroff_wait(void *, int);
 static void shutdown_halt(void *junk, int howto);
 static void shutdown_panic(void *junk, int howto);
 static void shutdown_reset(void *junk, int howto);
-static void vpanic(const char *fmt, va_list ap) __dead2;
 
 /* register various local shutdown events */
 static void
@@ -675,12 +675,9 @@ panic(const char *fmt, ...)
 	vpanic(fmt, ap);
 }
 
-static void
+void
 vpanic(const char *fmt, va_list ap)
 {
-#ifdef SMP
-	cpuset_t other_cpus;
-#endif
 	struct thread *td = curthread;
 	int bootopt, newpanic;
 	static char buf[256];
@@ -689,7 +686,7 @@ vpanic(const char *fmt, va_list ap)
 
 #ifdef SMP
 	/*
-	 * stop_cpus_hard(other_cpus) should prevent multiple CPUs from
+	 * stop_cpus_hard() should prevent multiple CPUs from
 	 * concurrently entering panic.  Only the winner will proceed
 	 * further.
 	 */
@@ -697,10 +694,8 @@ vpanic(const char *fmt, va_list ap)
 		stop_cpus_hard();
 
 	/*
-	 * We set stop_scheduler here and not in the block above,
-	 * because we want to ensure that if panic has been called and
-	 * stop_scheduler_on_panic is true, then stop_scheduler will
-	 * always be set.  Even if panic has been entered from kdb.
+	 * Ensure that the scheduler is stopped while panicking, even if panic
+	 * has been entered from kdb.
 	 */
 	td->td_stopsched = 1;
 #endif
@@ -824,9 +819,14 @@ SYSCTL_STRING(_kern_shutdown, OID_AUTO, dumpdevname, CTLFLAG_RD,
 
 /* Registration of dumpers */
 int
-set_dumper(struct dumperinfo *di, const char *devname)
+set_dumper(struct dumperinfo *di, const char *devname, struct thread *td)
 {
 	size_t wantcopy;
+	int error;
+
+	error = priv_check(td, PRIV_SETDUMPER);
+	if (error != 0)
+		return (error);
 
 	if (di == NULL) {
 		bzero(&dumper, sizeof dumper);

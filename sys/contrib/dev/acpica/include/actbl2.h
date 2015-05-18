@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2013, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -72,8 +72,10 @@
 #define ACPI_SIG_HPET           "HPET"      /* High Precision Event Timer table */
 #define ACPI_SIG_IBFT           "IBFT"      /* iSCSI Boot Firmware Table */
 #define ACPI_SIG_IVRS           "IVRS"      /* I/O Virtualization Reporting Structure */
+#define ACPI_SIG_LPIT           "LPIT"      /* Low Power Idle Table */
 #define ACPI_SIG_MCFG           "MCFG"      /* PCI Memory Mapped Configuration table */
 #define ACPI_SIG_MCHI           "MCHI"      /* Management Controller Host Interface table */
+#define ACPI_SIG_MSDM           "MSDM"      /* Microsoft Data Management Table */
 #define ACPI_SIG_MTMR           "MTMR"      /* MID Timer table */
 #define ACPI_SIG_SLIC           "SLIC"      /* Software Licensing Description Table */
 #define ACPI_SIG_SPCR           "SPCR"      /* Serial Port Console Redirection table */
@@ -373,6 +375,14 @@ typedef struct acpi_table_dbg2
 } ACPI_TABLE_DBG2;
 
 
+typedef struct acpi_dbg2_header
+{
+    UINT32                  InfoOffset;
+    UINT32                  InfoCount;
+
+} ACPI_DBG2_HEADER;
+
+
 /* Debug Device Information Subtable */
 
 typedef struct acpi_dbg2_device
@@ -441,7 +451,7 @@ typedef struct acpi_table_dbgp
  *        Version 1
  *
  * Conforms to "Intel Virtualization Technology for Directed I/O",
- * Version 1.2, Sept. 2008
+ * Version 2.2, Sept. 2013
  *
  ******************************************************************************/
 
@@ -457,6 +467,7 @@ typedef struct acpi_table_dmar
 /* Masks for Flags field above */
 
 #define ACPI_DMAR_INTR_REMAP        (1)
+#define	ACPI_DMAR_X2APIC_OPT_OUT    (2)
 
 
 /* DMAR subtable header */
@@ -474,9 +485,10 @@ enum AcpiDmarType
 {
     ACPI_DMAR_TYPE_HARDWARE_UNIT        = 0,
     ACPI_DMAR_TYPE_RESERVED_MEMORY      = 1,
-    ACPI_DMAR_TYPE_ATSR                 = 2,
-    ACPI_DMAR_HARDWARE_AFFINITY         = 3,
-    ACPI_DMAR_TYPE_RESERVED             = 4     /* 4 and greater are reserved */
+    ACPI_DMAR_TYPE_ROOT_ATS             = 2,
+    ACPI_DMAR_TYPE_HARDWARE_AFFINITY    = 3,
+    ACPI_DMAR_TYPE_NAMESPACE            = 4,
+    ACPI_DMAR_TYPE_RESERVED             = 5     /* 5 and greater are reserved */
 };
 
 
@@ -492,7 +504,7 @@ typedef struct acpi_dmar_device_scope
 
 } ACPI_DMAR_DEVICE_SCOPE;
 
-/* Values for EntryType in ACPI_DMAR_DEVICE_SCOPE */
+/* Values for EntryType in ACPI_DMAR_DEVICE_SCOPE - device types */
 
 enum AcpiDmarScopeType
 {
@@ -501,7 +513,8 @@ enum AcpiDmarScopeType
     ACPI_DMAR_SCOPE_TYPE_BRIDGE         = 2,
     ACPI_DMAR_SCOPE_TYPE_IOAPIC         = 3,
     ACPI_DMAR_SCOPE_TYPE_HPET           = 4,
-    ACPI_DMAR_SCOPE_TYPE_RESERVED       = 5     /* 5 and greater are reserved */
+    ACPI_DMAR_SCOPE_TYPE_NAMESPACE      = 5,
+    ACPI_DMAR_SCOPE_TYPE_RESERVED       = 6     /* 6 and greater are reserved */
 };
 
 typedef struct acpi_dmar_pci_path
@@ -513,7 +526,7 @@ typedef struct acpi_dmar_pci_path
 
 
 /*
- * DMAR Sub-tables, correspond to Type in ACPI_DMAR_HEADER
+ * DMAR Subtables, correspond to Type in ACPI_DMAR_HEADER
  */
 
 /* 0: Hardware Unit Definition */
@@ -576,6 +589,18 @@ typedef struct acpi_dmar_rhsa
     UINT32                  ProximityDomain;
 
 } ACPI_DMAR_RHSA;
+
+
+/* 4: ACPI Namespace Device Declaration Structure */
+
+typedef struct acpi_dmar_andd
+{
+    ACPI_DMAR_HEADER        Header;
+    UINT8                   Reserved[3];
+    UINT8                   DeviceNumber;
+    char                    DeviceName[1];
+
+} ACPI_DMAR_ANDD;
 
 
 /*******************************************************************************
@@ -926,7 +951,84 @@ typedef struct acpi_ivrs_memory
 
 /*******************************************************************************
  *
- * MCFG - PCI Memory Mapped Configuration table and sub-table
+ * LPIT - Low Power Idle Table
+ *
+ * Conforms to "ACPI Low Power Idle Table (LPIT) and _LPD Proposal (DRAFT)"
+ *
+ ******************************************************************************/
+
+typedef struct acpi_table_lpit
+{
+    ACPI_TABLE_HEADER       Header;             /* Common ACPI table header */
+
+} ACPI_TABLE_LPIT;
+
+
+/* LPIT subtable header */
+
+typedef struct acpi_lpit_header
+{
+    UINT32                  Type;               /* Subtable type */
+    UINT32                  Length;             /* Subtable length */
+    UINT16                  UniqueId;
+    UINT16                  Reserved;
+    UINT32                  Flags;
+
+} ACPI_LPIT_HEADER;
+
+/* Values for subtable Type above */
+
+enum AcpiLpitType
+{
+    ACPI_LPIT_TYPE_NATIVE_CSTATE    = 0x00,
+    ACPI_LPIT_TYPE_SIMPLE_IO        = 0x01,
+    ACPI_LPIT_TYPE_RESERVED         = 0x02      /* 2 and above are reserved */
+};
+
+/* Masks for Flags field above  */
+
+#define ACPI_LPIT_STATE_DISABLED    (1)
+#define ACPI_LPIT_NO_COUNTER        (1<<1)
+
+/*
+ * LPIT subtables, correspond to Type in ACPI_LPIT_HEADER
+ */
+
+/* 0x00: Native C-state instruction based LPI structure */
+
+typedef struct acpi_lpit_native
+{
+    ACPI_LPIT_HEADER        Header;
+    ACPI_GENERIC_ADDRESS    EntryTrigger;
+    UINT32                  Residency;
+    UINT32                  Latency;
+    ACPI_GENERIC_ADDRESS    ResidencyCounter;
+    UINT64                  CounterFrequency;
+
+} ACPI_LPIT_NATIVE;
+
+
+/* 0x01: Simple I/O based LPI structure */
+
+typedef struct acpi_lpit_io
+{
+    ACPI_LPIT_HEADER        Header;
+    ACPI_GENERIC_ADDRESS    EntryTrigger;
+    UINT32                  TriggerAction;
+    UINT64                  TriggerValue;
+    UINT64                  TriggerMask;
+    ACPI_GENERIC_ADDRESS    MinimumIdleState;
+    UINT32                  Residency;
+    UINT32                  Latency;
+    ACPI_GENERIC_ADDRESS    ResidencyCounter;
+    UINT64                  CounterFrequency;
+
+} ACPI_LPIT_IO;
+
+
+/*******************************************************************************
+ *
+ * MCFG - PCI Memory Mapped Configuration table and subtable
  *        Version 1
  *
  * Conforms to "PCI Firmware Specification", Revision 3.0, June 20, 2005
@@ -985,6 +1087,24 @@ typedef struct acpi_table_mchi
 
 /*******************************************************************************
  *
+ * MSDM - Microsoft Data Management table
+ *
+ * Conforms to "Microsoft Software Licensing Tables (SLIC and MSDM)",
+ * November 29, 2011. Copyright 2011 Microsoft
+ *
+ ******************************************************************************/
+
+/* Basic MSDM table is only the common ACPI header */
+
+typedef struct acpi_table_msdm
+{
+    ACPI_TABLE_HEADER       Header;             /* Common ACPI table header */
+
+} ACPI_TABLE_MSDM;
+
+
+/*******************************************************************************
+ *
  * MTMR - MID Timer Table
  *        Version 1
  *
@@ -1014,10 +1134,9 @@ typedef struct acpi_mtmr_entry
 /*******************************************************************************
  *
  * SLIC - Software Licensing Description Table
- *        Version 1
  *
- * Conforms to "OEM Activation 2.0 for Windows Vista Operating Systems",
- * Copyright 2006
+ * Conforms to "Microsoft Software Licensing Tables (SLIC and MSDM)",
+ * November 29, 2011. Copyright 2011 Microsoft
  *
  ******************************************************************************/
 
@@ -1028,62 +1147,6 @@ typedef struct acpi_table_slic
     ACPI_TABLE_HEADER       Header;             /* Common ACPI table header */
 
 } ACPI_TABLE_SLIC;
-
-
-/* Common SLIC subtable header */
-
-typedef struct acpi_slic_header
-{
-    UINT32                  Type;
-    UINT32                  Length;
-
-} ACPI_SLIC_HEADER;
-
-/* Values for Type field above */
-
-enum AcpiSlicType
-{
-    ACPI_SLIC_TYPE_PUBLIC_KEY           = 0,
-    ACPI_SLIC_TYPE_WINDOWS_MARKER       = 1,
-    ACPI_SLIC_TYPE_RESERVED             = 2    /* 2 and greater are reserved */
-};
-
-
-/*
- * SLIC Sub-tables, correspond to Type in ACPI_SLIC_HEADER
- */
-
-/* 0: Public Key Structure */
-
-typedef struct acpi_slic_key
-{
-    ACPI_SLIC_HEADER        Header;
-    UINT8                   KeyType;
-    UINT8                   Version;
-    UINT16                  Reserved;
-    UINT32                  Algorithm;
-    char                    Magic[4];
-    UINT32                  BitLength;
-    UINT32                  Exponent;
-    UINT8                   Modulus[128];
-
-} ACPI_SLIC_KEY;
-
-
-/* 1: Windows Marker Structure */
-
-typedef struct acpi_slic_marker
-{
-    ACPI_SLIC_HEADER        Header;
-    UINT32                  Version;
-    char                    OemId[ACPI_OEM_ID_SIZE];            /* ASCII OEM identification */
-    char                    OemTableId[ACPI_OEM_TABLE_ID_SIZE]; /* ASCII OEM table identification */
-    char                    WindowsFlag[8];
-    UINT32                  SlicVersion;
-    UINT8                   Reserved[16];
-    UINT8                   Signature[128];
-
-} ACPI_SLIC_MARKER;
 
 
 /*******************************************************************************

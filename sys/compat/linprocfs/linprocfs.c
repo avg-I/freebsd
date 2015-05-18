@@ -53,10 +53,10 @@ __FBSDID("$FreeBSD$");
 #include <sys/filedesc.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/linker.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
-#include <sys/mount.h>
 #include <sys/msg.h>
 #include <sys/mutex.h>
 #include <sys/namei.h>
@@ -67,6 +67,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sem.h>
 #include <sys/smp.h>
 #include <sys/socket.h>
+#include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/time.h>
@@ -326,11 +327,12 @@ static int
 linprocfs_domtab(PFS_FILL_ARGS)
 {
 	struct nameidata nd;
-	struct mount *mp;
 	const char *lep;
 	char *dlep, *flep, *mntto, *mntfrom, *fstype;
 	size_t lep_len;
 	int error;
+	struct statfs *buf, *sp;
+	size_t count;
 
 	/* resolve symlinks etc. in the emulation tree prefix */
 	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, linux_emul_path, td);
@@ -344,20 +346,26 @@ linprocfs_domtab(PFS_FILL_ARGS)
 	}
 	lep_len = strlen(lep);
 
-	mtx_lock(&mountlist_mtx);
-	error = 0;
-	TAILQ_FOREACH(mp, &mountlist, mnt_list) {
+	buf = NULL;
+	error = kern_getfsstat(td, &buf, SIZE_T_MAX, &count,
+	    UIO_SYSSPACE, MNT_WAIT);
+	if (error != 0) {
+		free(buf, M_TEMP);
+		free(flep, M_TEMP);
+		return (error);
+	}
+
+	for (sp = buf; count > 0; sp++, count--) {
 		/* determine device name */
-		mntfrom = mp->mnt_stat.f_mntfromname;
+		mntfrom = sp->f_mntfromname;
 
 		/* determine mount point */
-		mntto = mp->mnt_stat.f_mntonname;
-		if (strncmp(mntto, lep, lep_len) == 0 &&
-		    mntto[lep_len] == '/')
+		mntto = sp->f_mntonname;
+		if (strncmp(mntto, lep, lep_len) == 0 && mntto[lep_len] == '/')
 			mntto += lep_len;
 
 		/* determine fs type */
-		fstype = mp->mnt_stat.f_fstypename;
+		fstype = sp->f_fstypename;
 		if (strcmp(fstype, pn->pn_info->pi_name) == 0)
 			mntfrom = fstype = "proc";
 		else if (strcmp(fstype, "procfs") == 0)
@@ -365,16 +373,16 @@ linprocfs_domtab(PFS_FILL_ARGS)
 
 		if (strcmp(fstype, "linsysfs") == 0) {
 			sbuf_printf(sb, "/sys %s sysfs %s", mntto,
-			    mp->mnt_stat.f_flags & MNT_RDONLY ? "ro" : "rw");
+			    sp->f_flags & MNT_RDONLY ? "ro" : "rw");
 		} else {
 			/* For Linux msdosfs is called vfat */
 			if (strcmp(fstype, "msdosfs") == 0)
 				fstype = "vfat";
 			sbuf_printf(sb, "%s %s %s %s", mntfrom, mntto, fstype,
-			    mp->mnt_stat.f_flags & MNT_RDONLY ? "ro" : "rw");
+			    sp->f_flags & MNT_RDONLY ? "ro" : "rw");
 		}
 #define ADD_OPTION(opt, name) \
-	if (mp->mnt_stat.f_flags & (opt)) sbuf_printf(sb, "," name);
+	if (sp->f_flags & (opt)) sbuf_printf(sb, "," name);
 		ADD_OPTION(MNT_SYNCHRONOUS,	"sync");
 		ADD_OPTION(MNT_NOEXEC,		"noexec");
 		ADD_OPTION(MNT_NOSUID,		"nosuid");
@@ -387,14 +395,14 @@ linprocfs_domtab(PFS_FILL_ARGS)
 		/* a real Linux mtab will also show NFS options */
 		sbuf_printf(sb, " 0 0\n");
 	}
-	mtx_unlock(&mountlist_mtx);
+
+	free(buf, M_TEMP);
 	free(flep, M_TEMP);
 	return (error);
 }
 
 /*
  * Filler function for proc/partitions
- *
  */
 static int
 linprocfs_dopartitions(PFS_FILL_ARGS)
@@ -402,27 +410,9 @@ linprocfs_dopartitions(PFS_FILL_ARGS)
 	struct g_class *cp;
 	struct g_geom *gp;
 	struct g_provider *pp;
-	struct nameidata nd;
-	const char *lep;
-	char  *dlep, *flep;
-	size_t lep_len;
-	int error;
 	int major, minor;
 
-	/* resolve symlinks etc. in the emulation tree prefix */
-	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, linux_emul_path, td);
-	flep = NULL;
-	error = namei(&nd);
-	lep = linux_emul_path;
-	if (error == 0) {
-		if (vn_fullpath(td, nd.ni_vp, &dlep, &flep) == 0)
-			lep = dlep;
-		vrele(nd.ni_vp);
-	}
-	lep_len = strlen(lep);
-
 	g_topology_lock();
-	error = 0;
 	sbuf_printf(sb, "major minor  #blocks  name rio rmerge rsect "
 	    "ruse wio wmerge wsect wuse running use aveq\n");
 
@@ -448,8 +438,7 @@ linprocfs_dopartitions(PFS_FILL_ARGS)
 	}
 	g_topology_unlock();
 
-	free(flep, M_TEMP);
-	return (error);
+	return (0);
 }
 
 
@@ -645,8 +634,10 @@ linprocfs_doprocstat(PFS_FILL_ARGS)
 	static int ratelimit = 0;
 	vm_offset_t startcode, startdata;
 
+	sx_slock(&proctree_lock);
 	PROC_LOCK(p);
 	fill_kinfo_proc(p, &kp);
+	sx_sunlock(&proctree_lock);
 	if (p->p_vmspace) {
 	   startcode = (vm_offset_t)p->p_vmspace->vm_taddr;
 	   startdata = (vm_offset_t)p->p_vmspace->vm_daddr;
@@ -672,7 +663,7 @@ linprocfs_doprocstat(PFS_FILL_ARGS)
 	PS_ADD("pgrp",		"%d",	p->p_pgid);
 	PS_ADD("session",	"%d",	p->p_session->s_sid);
 	PROC_UNLOCK(p);
-	PS_ADD("tty",		"%d",	kp.ki_tdev);
+	PS_ADD("tty",		"%ju",	(uintmax_t)kp.ki_tdev);
 	PS_ADD("tpgid",		"%d",	kp.ki_tpgid);
 	PS_ADD("flags",		"%u",	0); /* XXX */
 	PS_ADD("minflt",	"%lu",	kp.ki_rusage.ru_minflt);
@@ -722,9 +713,11 @@ linprocfs_doprocstatm(PFS_FILL_ARGS)
 	struct kinfo_proc kp;
 	segsz_t lsize;
 
+	sx_slock(&proctree_lock);
 	PROC_LOCK(p);
 	fill_kinfo_proc(p, &kp);
 	PROC_UNLOCK(p);
+	sx_sunlock(&proctree_lock);
 
 	/*
 	 * See comments in linprocfs_doprocstatus() regarding the
@@ -757,6 +750,7 @@ linprocfs_doprocstatus(PFS_FILL_ARGS)
 	struct sigacts *ps;
 	int i;
 
+	sx_slock(&proctree_lock);
 	PROC_LOCK(p);
 	td2 = FIRST_THREAD_IN_PROC(p); /* XXXKSE pretend only one thread */
 
@@ -795,6 +789,8 @@ linprocfs_doprocstatus(PFS_FILL_ARGS)
 	}
 
 	fill_kinfo_proc(p, &kp);
+	sx_sunlock(&proctree_lock);
+
 	sbuf_printf(sb, "Name:\t%s\n",		p->p_comm); /* XXX escape */
 	sbuf_printf(sb, "State:\t%s\n",		state);
 
@@ -1132,26 +1128,26 @@ linprocfs_donetdev(PFS_FILL_ARGS)
 		linux_ifname(ifp, ifname, sizeof ifname);
 		sbuf_printf(sb, "%6.6s: ", ifname);
 		sbuf_printf(sb, "%7ju %7ju %4ju %4ju %4lu %5lu %10lu %9ju ",
-		    (uintmax_t )ifp->if_ibytes,	/* rx_bytes */
-		    (uintmax_t )ifp->if_ipackets,	/* rx_packets */
-		    (uintmax_t )ifp->if_ierrors,	/* rx_errors */
-		    (uintmax_t )ifp->if_iqdrops,	/* rx_dropped +
-							 * rx_missed_errors */
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_IBYTES),
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_IPACKETS),
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_IERRORS),
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_IQDROPS),
+							/* rx_missed_errors */
 		    0UL,				/* rx_fifo_errors */
 		    0UL,				/* rx_length_errors +
 							 * rx_over_errors +
 							 * rx_crc_errors +
 							 * rx_frame_errors */
 		    0UL,				/* rx_compressed */
-		    (uintmax_t )ifp->if_imcasts);	/* multicast,
-							 * XXX-BZ rx only? */
-		sbuf_printf(sb, "%8ju %7ju %4ju %4lu %4lu %5ju %7lu %10lu\n",
-		    (uintmax_t )ifp->if_obytes,	/* tx_bytes */
-		    (uintmax_t )ifp->if_opackets,	/* tx_packets */
-		    (uintmax_t )ifp->if_oerrors,	/* tx_errors */
-		    0UL,				/* tx_dropped */
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_IMCASTS));
+							/* XXX-BZ rx only? */
+		sbuf_printf(sb, "%8ju %7ju %4ju %4ju %4lu %5ju %7lu %10lu\n",
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_OBYTES),
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_OPACKETS),
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_OERRORS),
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_OQDROPS),
 		    0UL,				/* tx_fifo_errors */
-		    (uintmax_t )ifp->if_collisions,	/* collisions */
+		    (uintmax_t )ifp->if_get_counter(ifp, IFCOUNTER_COLLISIONS),
 		    0UL,				/* tx_carrier_errors +
 							 * tx_aborted_errors +
 							 * tx_window_errors +

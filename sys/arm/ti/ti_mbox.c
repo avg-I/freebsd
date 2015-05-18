@@ -47,14 +47,12 @@ __FBSDID("$FreeBSD$");
 #include <dev/ofw/ofw_bus_subr.h>
 
 #include <machine/bus.h>
-#include <machine/fdt.h>
 
 #include <arm/ti/ti_mbox.h>
 #include <arm/ti/ti_prcm.h>
 
 #include "mbox_if.h"
 
-#define DEBUG
 #ifdef DEBUG
 #define	DPRINTF(fmt, ...)	do {	\
 	printf("%s: ", __func__);	\

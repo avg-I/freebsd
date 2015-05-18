@@ -84,7 +84,7 @@ __FBSDID("$FreeBSD$");
 #ifdef	RUN_DEBUG
 int run_debug = 0;
 static SYSCTL_NODE(_hw_usb, OID_AUTO, run, CTLFLAG_RW, 0, "USB run");
-SYSCTL_INT(_hw_usb_run, OID_AUTO, debug, CTLFLAG_RW, &run_debug, 0,
+SYSCTL_INT(_hw_usb_run, OID_AUTO, debug, CTLFLAG_RWTUN, &run_debug, 0,
     "run debug level");
 #endif
 
@@ -225,13 +225,14 @@ static const STRUCT_USB_HOST_ID run_devs[] = {
     RUN_DEV(LOGITEC,		LANW300NU2),
     RUN_DEV(LOGITEC,		LANW150NU2),
     RUN_DEV(LOGITEC,		LANW300NU2S),
-    RUN_DEV(MELCO,		RT2870_1),
+    RUN_DEV(MELCO,		WLIUCG300HP),
     RUN_DEV(MELCO,		RT2870_2),
     RUN_DEV(MELCO,		WLIUCAG300N),
     RUN_DEV(MELCO,		WLIUCG300N),
     RUN_DEV(MELCO,		WLIUCG301N),
     RUN_DEV(MELCO,		WLIUCGN),
     RUN_DEV(MELCO,		WLIUCGNM),
+    RUN_DEV(MELCO,		WLIUCG300HPV1),
     RUN_DEV(MELCO,		WLIUCGNM2),
     RUN_DEV(MOTOROLA4,		RT2770),
     RUN_DEV(MOTOROLA4,		RT3070),
@@ -2574,7 +2575,7 @@ run_drain_fifo(void *arg)
 		if (stat & RT2860_TXQ_OK)
 			(*wstat)[RUN_SUCCESS]++;
 		else
-			ifp->if_oerrors++;
+			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 		/*
 		 * Check if there were retries, ie if the Tx success rate is
 		 * different from the requested rate. Note that it works only
@@ -2620,7 +2621,7 @@ run_iter_func(void *arg, struct ieee80211_node *ni)
 			goto fail;
 
 		/* count failed TX as errors */
-		ifp->if_oerrors += le16toh(sta[0].error.fail);
+		if_inc_counter(ifp, IFCOUNTER_OERRORS, le16toh(sta[0].error.fail));
 
 		retrycnt = le16toh(sta[1].tx.retry);
 		success = le16toh(sta[1].tx.success);
@@ -2786,7 +2787,7 @@ run_rx_frame(struct run_softc *sc, struct mbuf *m, uint32_t dmalen)
 		rxwisize += sizeof(uint32_t);
 	if (__predict_false(len > dmalen)) {
 		m_freem(m);
-		ifp->if_ierrors++;
+		if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 		DPRINTF("bad RXWI length %u > %u\n", len, dmalen);
 		return;
 	}
@@ -2796,7 +2797,7 @@ run_rx_frame(struct run_softc *sc, struct mbuf *m, uint32_t dmalen)
 
 	if (__predict_false(flags & (RT2860_RX_CRCERR | RT2860_RX_ICVERR))) {
 		m_freem(m);
-		ifp->if_ierrors++;
+		if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 		DPRINTF("%s error.\n", (flags & RT2860_RX_CRCERR)?"CRC":"ICV");
 		return;
 	}
@@ -2825,7 +2826,7 @@ run_rx_frame(struct run_softc *sc, struct mbuf *m, uint32_t dmalen)
 			ieee80211_notify_michael_failure(ni->ni_vap, wh,
 			    rxwi->keyidx);
 		m_freem(m);
-		ifp->if_ierrors++;
+		if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 		DPRINTF("MIC error. Someone is lying.\n");
 		return;
 	}
@@ -2925,7 +2926,7 @@ tr_setup:
 		}
 		if (sc->rx_m == NULL) {
 			DPRINTF("could not allocate mbuf - idle with stall\n");
-			ifp->if_ierrors++;
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 			usbd_xfer_set_stall(xfer);
 			usbd_xfer_set_frames(xfer, 0);
 		} else {
@@ -2949,7 +2950,7 @@ tr_setup:
 			if (error == USB_ERR_TIMEOUT)
 				device_printf(sc->sc_dev, "device timeout\n");
 
-			ifp->if_ierrors++;
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 
 			goto tr_setup;
 		}
@@ -2998,7 +2999,7 @@ tr_setup:
 		m0 = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
 		if (__predict_false(m0 == NULL)) {
 			DPRINTF("could not allocate mbuf\n");
-			ifp->if_ierrors++;
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 			break;
 		}
 		m_copydata(m, 4 /* skip 32-bit DMA-len header */,
@@ -3070,7 +3071,7 @@ run_bulk_tx_callbackN(struct usb_xfer *xfer, usb_error_t error, u_int index)
 
 		usbd_xfer_set_priv(xfer, NULL);
 
-		ifp->if_opackets++;
+		if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 
 		/* FALLTHROUGH */
 	case USB_ST_SETUP:
@@ -3089,7 +3090,7 @@ tr_setup:
 			DPRINTF("data overflow, %u bytes\n",
 			    m->m_pkthdr.len);
 
-			ifp->if_oerrors++;
+			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 
 			run_tx_free(pq, data, 1);
 
@@ -3144,7 +3145,7 @@ tr_setup:
 
 		data = usbd_xfer_get_priv(xfer);
 
-		ifp->if_oerrors++;
+		if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 
 		if (data != NULL) {
 			if(data->ni != NULL)
@@ -3567,7 +3568,7 @@ run_sendprot(struct run_softc *sc,
 		mprot = ieee80211_alloc_cts(ic, ni->ni_vap->iv_myaddr, dur);
 	}
 	if (mprot == NULL) {
-		sc->sc_ifp->if_oerrors++;
+		if_inc_counter(sc->sc_ifp, IFCOUNTER_OERRORS, 1);
 		DPRINTF("could not allocate mbuf\n");
 		return (ENOBUFS);
 	}
@@ -3703,20 +3704,20 @@ run_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 	if (params == NULL) {
 		/* tx mgt packet */
 		if ((error = run_tx_mgt(sc, m, ni)) != 0) {
-			ifp->if_oerrors++;
+			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 			DPRINTF("mgt tx failed\n");
 			goto done;
 		}
 	} else {
 		/* tx raw packet with param */
 		if ((error = run_tx_param(sc, m, ni, params)) != 0) {
-			ifp->if_oerrors++;
+			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 			DPRINTF("tx with param failed\n");
 			goto done;
 		}
 	}
 
-	ifp->if_opackets++;
+	if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 
 done:
 	RUN_UNLOCK(sc);
@@ -4913,6 +4914,12 @@ run_update_beacon(struct ieee80211vap *vap, int item)
 	}
 
 	setbit(rvp->bo.bo_flags, item);
+	if (rvp->beacon_mbuf == NULL) {
+		rvp->beacon_mbuf = ieee80211_beacon_alloc(vap->iv_bss,
+		    &rvp->bo);
+		if (rvp->beacon_mbuf == NULL)
+			return;
+	}
 	ieee80211_beacon_update(vap->iv_bss, &rvp->bo, rvp->beacon_mbuf, mcast);
 
 	i = RUN_CMDQ_GET(&sc->cmdq_store);

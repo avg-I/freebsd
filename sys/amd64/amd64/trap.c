@@ -436,15 +436,13 @@ trap(struct trapframe *frame)
 		case T_XMMFLT:		/* SIMD floating-point exception */
 		case T_FPOPFLT:		/* FPU operand fetch fault */
 			/*
-			 * XXXKIB for now disable any FPU traps in kernel
-			 * handler registration seems to be overkill
+			 * For now, supporting kernel handler
+			 * registration for FPU traps is overkill.
 			 */
 			trap_fatal(frame, 0);
 			goto out;
 
 		case T_STKFLT:		/* stack fault */
-			break;
-
 		case T_PROTFLT:		/* general protection fault */
 		case T_SEGNPFLT:	/* segment not present fault */
 			if (td->td_intr_nesting_level != 0)
@@ -614,7 +612,8 @@ trap_check(struct trapframe *frame)
 {
 
 #ifdef KDTRACE_HOOKS
-	if (dtrace_trap_func != NULL && (*dtrace_trap_func)(frame))
+	if (dtrace_trap_func != NULL &&
+	    (*dtrace_trap_func)(frame, frame->tf_trapno) != 0)
 		return;
 #endif
 	trap(frame);
@@ -770,12 +769,6 @@ nogo:
 	if (!usermode) {
 		if (td->td_intr_nesting_level == 0 &&
 		    curpcb->pcb_onfault != NULL) {
-			frame->tf_rip = (long)curpcb->pcb_onfault;
-			return (0);
-		}
-		if ((td->td_pflags & TDP_DEVMEMIO) != 0) {
-			KASSERT(curpcb->pcb_onfault != NULL,
-			    ("/dev/mem without pcb_onfault"));
 			frame->tf_rip = (long)curpcb->pcb_onfault;
 			return (0);
 		}

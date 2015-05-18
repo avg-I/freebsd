@@ -97,7 +97,7 @@ kgdb_thr_add_procs(uintptr_t paddr)
 			kt->kaddr = addr;
 			if (td.td_tid == dumptid)
 				kt->pcb = dumppcb;
-			else if (td.td_state == TDS_RUNNING &&
+			else if (td.td_oncpu != NOCPU &&
 			    (CPU_ISSET(td.td_oncpu, &stopped_cpus) ||
 			    CPU_ISSET(td.td_oncpu, &hard_stopped_cpus)))
 				kt->pcb = kgdb_trgt_core_pcb(td.td_oncpu);

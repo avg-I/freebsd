@@ -187,11 +187,13 @@ create_thread(struct thread *td, mcontext_t *ctx,
 	}
 
 #ifdef RACCT
-	PROC_LOCK(td->td_proc);
-	error = racct_add(p, RACCT_NTHR, 1);
-	PROC_UNLOCK(td->td_proc);
-	if (error != 0)
-		return (EPROCLIM);
+	if (racct_enable) {
+		PROC_LOCK(p);
+		error = racct_add(p, RACCT_NTHR, 1);
+		PROC_UNLOCK(p);
+		if (error != 0)
+			return (EPROCLIM);
+	}
 #endif
 
 	/* Initialize our td */
@@ -250,9 +252,9 @@ create_thread(struct thread *td, mcontext_t *ctx,
 		}
 	}
 
-	PROC_LOCK(td->td_proc);
-	td->td_proc->p_flag |= P_HADTHREADS;
-	thread_link(newtd, p); 
+	PROC_LOCK(p);
+	p->p_flag |= P_HADTHREADS;
+	thread_link(newtd, p);
 	bcopy(p->p_comm, newtd->td_name, sizeof(newtd->td_name));
 	thread_lock(td);
 	/* let the scheduler know about these things. */
@@ -280,9 +282,11 @@ create_thread(struct thread *td, mcontext_t *ctx,
 
 fail:
 #ifdef RACCT
-	PROC_LOCK(p);
-	racct_sub(p, RACCT_NTHR, 1);
-	PROC_UNLOCK(p);
+	if (racct_enable) {
+		PROC_LOCK(p);
+		racct_sub(p, RACCT_NTHR, 1);
+		PROC_UNLOCK(p);
+	}
 #endif
 	return (error);
 }
@@ -317,20 +321,23 @@ sys_thr_exit(struct thread *td, struct thr_exit_args *uap)
 
 	PROC_LOCK(p);
 
-	/*
-	 * Shutting down last thread in the proc.  This will actually
-	 * call exit() in the trampoline when it returns.
-	 */
 	if (p->p_numthreads != 1) {
 		racct_sub(p, RACCT_NTHR, 1);
 		LIST_REMOVE(td, td_hash);
 		rw_wunlock(&tidhash_lock);
 		tdsigcleanup(td);
+		umtx_thread_exit(td);
 		PROC_SLOCK(p);
 		thread_stopped(p);
 		thread_exit();
 		/* NOTREACHED */
 	}
+
+	/*
+	 * Ignore attempts to shut down last thread in the proc.  This
+	 * will actually call _exit(2) in the usermode trampoline when
+	 * it returns.
+	 */
 	PROC_UNLOCK(p);
 	rw_wunlock(&tidhash_lock);
 	return (0);

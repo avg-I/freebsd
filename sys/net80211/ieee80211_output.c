@@ -157,7 +157,7 @@ ieee80211_vap_pkt_send_dest(struct ieee80211vap *vap, struct mbuf *m,
 		    ni->ni_macaddr, NULL,
 		    "%s", "classification failure");
 		vap->iv_stats.is_tx_classify++;
-		ifp->if_oerrors++;
+		if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 		m_freem(m);
 		ieee80211_free_node(ni);
 
@@ -251,7 +251,7 @@ ieee80211_vap_pkt_send_dest(struct ieee80211vap *vap, struct mbuf *m,
 		/* NB: IFQ_HANDOFF reclaims mbuf */
 		ieee80211_free_node(ni);
 	} else {
-		ifp->if_opackets++;
+		if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 	}
 	ic->ic_lastdata = ticks;
 
@@ -299,7 +299,7 @@ ieee80211_start_pkt(struct ieee80211vap *vap, struct mbuf *m)
 		IEEE80211_DPRINTF(vap, IEEE80211_MSG_OUTPUT,
 		    "discard frame, %s\n", "m_pullup failed");
 		vap->iv_stats.is_tx_nobuf++;	/* XXX */
-		ifp->if_oerrors++;
+		if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 		return (ENOBUFS);
 	}
 	eh = mtod(m, struct ether_header *);
@@ -332,7 +332,7 @@ ieee80211_start_pkt(struct ieee80211vap *vap, struct mbuf *m)
 		ni = ieee80211_find_txnode(vap, eh->ether_dhost);
 		if (ni == NULL) {
 			/* NB: ieee80211_find_txnode does stat+msg */
-			ifp->if_oerrors++;
+			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 			m_freem(m);
 			/* XXX better status? */
 			return (ENOBUFS);
@@ -344,7 +344,7 @@ ieee80211_start_pkt(struct ieee80211vap *vap, struct mbuf *m)
 			    "sta not associated (type 0x%04x)",
 			    htons(eh->ether_type));
 			vap->iv_stats.is_tx_notassoc++;
-			ifp->if_oerrors++;
+			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 			m_freem(m);
 			ieee80211_free_node(ni);
 			/* XXX better status? */
@@ -363,7 +363,7 @@ ieee80211_start_pkt(struct ieee80211vap *vap, struct mbuf *m)
 				    eh->ether_dhost, NULL,
 				    "%s", "proxy not enabled");
 				vap->iv_stats.is_mesh_notproxy++;
-				ifp->if_oerrors++;
+				if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 				m_freem(m);
 				/* XXX better status? */
 				return (ENOBUFS);
@@ -380,7 +380,7 @@ ieee80211_start_pkt(struct ieee80211vap *vap, struct mbuf *m)
 			 * NB: ieee80211_mesh_discover holds/disposes
 			 * frame (e.g. queueing on path discovery).
 			 */
-			ifp->if_oerrors++;
+			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 			/* XXX better status? */
 			return (ENOBUFS);
 		}
@@ -608,7 +608,7 @@ ieee80211_output(struct ifnet *ifp, struct mbuf *m,
 	if (ieee80211_classify(ni, m))
 		senderr(EIO);		/* XXX */
 
-	ifp->if_opackets++;
+	if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 	IEEE80211_NODE_STAT(ni, tx_data);
 	if (IEEE80211_IS_MULTICAST(wh->i_addr1)) {
 		IEEE80211_NODE_STAT(ni, tx_mcast);
@@ -636,7 +636,7 @@ bad:
 		m_freem(m);
 	if (ni != NULL)
 		ieee80211_free_node(ni);
-	ifp->if_oerrors++;
+	if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 	return error;
 #undef senderr
 }
@@ -1702,7 +1702,7 @@ ieee80211_add_xrates(uint8_t *frm, const struct ieee80211_rateset *rs)
 /* 
  * Add an ssid element to a frame.
  */
-static uint8_t *
+uint8_t *
 ieee80211_add_ssid(uint8_t *frm, const uint8_t *ssid, u_int len)
 {
 	*frm++ = IEEE80211_ELEMID_SSID;
@@ -2322,18 +2322,33 @@ ieee80211_send_mgmt(struct ieee80211_node *ni, int type, int arg)
 			    ic->ic_curchan);
 			frm = ieee80211_add_supportedchannels(frm, ic);
 		}
+
+		/*
+		 * Check the channel - we may be using an 11n NIC with an
+		 * 11n capable station, but we're configured to be an 11b
+		 * channel.
+		 */
 		if ((vap->iv_flags_ht & IEEE80211_FHT_HT) &&
+		    IEEE80211_IS_CHAN_HT(ni->ni_chan) &&
 		    ni->ni_ies.htcap_ie != NULL &&
-		    ni->ni_ies.htcap_ie[0] == IEEE80211_ELEMID_HTCAP)
+		    ni->ni_ies.htcap_ie[0] == IEEE80211_ELEMID_HTCAP) {
 			frm = ieee80211_add_htcap(frm, ni);
+		}
 		frm = ieee80211_add_wpa(frm, vap);
 		if ((ic->ic_flags & IEEE80211_F_WME) &&
 		    ni->ni_ies.wme_ie != NULL)
 			frm = ieee80211_add_wme_info(frm, &ic->ic_wme);
+
+		/*
+		 * Same deal - only send HT info if we're on an 11n
+		 * capable channel.
+		 */
 		if ((vap->iv_flags_ht & IEEE80211_FHT_HT) &&
+		    IEEE80211_IS_CHAN_HT(ni->ni_chan) &&
 		    ni->ni_ies.htcap_ie != NULL &&
-		    ni->ni_ies.htcap_ie[0] == IEEE80211_ELEMID_VENDOR)
+		    ni->ni_ies.htcap_ie[0] == IEEE80211_ELEMID_VENDOR) {
 			frm = ieee80211_add_htcap_vendor(frm, ni);
+		}
 #ifdef IEEE80211_SUPPORT_SUPERG
 		if (IEEE80211_ATH_CAP(vap, ni, IEEE80211_F_ATHEROS)) {
 			frm = ieee80211_add_ath(frm, 
