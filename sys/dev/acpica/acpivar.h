@@ -80,15 +80,6 @@ struct acpi_softc {
     struct callout	susp_force_to;		/* Force suspend if no acks. */
 };
 
-/* Vendor-specific functional fixed hardware */
-struct acpi_ffh {
-	uint8_t		vendor;		/* Vendor code (Intel = 0x01) */
-	uint8_t		class;		/* Class code */
-	uint64_t	arg0;		/* Arg0 */
-	uint8_t		arg1;		/* Arg1 */
-};
-#define	ACPI_RES_FFH	0x7f	/* Resource type for FFixedHW (ACPI only) */
-
 struct acpi_device {
     /* ACPI ivars */
     ACPI_HANDLE			ad_handle;
@@ -194,7 +185,7 @@ extern struct mtx			acpi_mutex;
  * Various features and capabilities for the acpi_get_features() method.
  * In particular, these are used for the ACPI 3.0 _PDC and _OSC methods.
  * See the Intel document titled "Intel Processor Vendor-Specific ACPI",
- * number 302223-005.
+ * number 302223-007.
  */
 #define	ACPI_CAP_PERF_MSRS	(1 << 0)  /* Intel SpeedStep PERF_CTL MSRs */
 #define	ACPI_CAP_C1_IO_HALT	(1 << 1)  /* Intel C1 "IO then halt" sequence */
@@ -207,6 +198,9 @@ extern struct mtx			acpi_mutex;
 #define	ACPI_CAP_SMP_C1_NATIVE	(1 << 8)  /* MP C1 support other than halt */
 #define	ACPI_CAP_SMP_C3_NATIVE	(1 << 9)  /* MP C2 and C3 support */
 #define	ACPI_CAP_PX_HW_COORD	(1 << 11) /* Intel P-state HW coordination */
+#define	ACPI_CAP_INTR_CPPC	(1 << 12) /* Native Interrupt Handling for
+	     Collaborative Processor Performance Control notifications */
+#define	ACPI_CAP_HW_DUTY_C	(1 << 13) /* Hardware Duty Cycling */
 
 /*
  * Quirk flags.
@@ -352,9 +346,8 @@ ACPI_STATUS	acpi_Startup(void);
 void		acpi_UserNotify(const char *subsystem, ACPI_HANDLE h,
 		    uint8_t notify);
 int		acpi_bus_alloc_gas(device_t dev, int *type, int *rid,
-		    ACPI_GENERIC_ADDRESS *gas, void **res, u_int flags);
-void		acpi_bus_release_gas(device_t dev, int type, int rid,
-		    void *res);
+		    ACPI_GENERIC_ADDRESS *gas, struct resource **res,
+		    u_int flags);
 void		acpi_walk_subtables(void *first, void *end,
 		    acpi_subtable_handler *handler, void *arg);
 BOOLEAN		acpi_MatchHid(ACPI_HANDLE h, const char *hid);
@@ -472,8 +465,10 @@ int		acpi_acad_get_acline(int *);
 int		acpi_PkgInt(ACPI_OBJECT *res, int idx, UINT64 *dst);
 int		acpi_PkgInt32(ACPI_OBJECT *res, int idx, uint32_t *dst);
 int		acpi_PkgStr(ACPI_OBJECT *res, int idx, void *dst, size_t size);
-int		acpi_PkgGas(ACPI_OBJECT *res, int idx,
-		    ACPI_GENERIC_ADDRESS *dst);
+int		acpi_PkgGas(device_t dev, ACPI_OBJECT *res, int idx, int *type,
+		    int *rid, struct resource **dst, u_int flags);
+int		acpi_PkgFFH_IntelCpu(ACPI_OBJECT *res, int idx, int *vendor,
+		    int *class, uint64_t *address, int *accsize);
 ACPI_HANDLE	acpi_GetReference(ACPI_HANDLE scope, ACPI_OBJECT *obj);
 
 /*
@@ -498,6 +493,17 @@ ACPI_HANDLE	acpi_GetReference(ACPI_HANDLE scope, ACPI_OBJECT *obj);
 #define	KTR_ACPI		KTR_DEV
 
 SYSCTL_DECL(_debug_acpi);
+
+/*
+ * Map a PXM to a VM domain.
+ *
+ * Returns the VM domain ID if found, or -1 if not found / invalid.
+ */
+#if MAXMEMDOM > 1
+extern	int acpi_map_pxm_to_vm_domainid(int pxm);
+#endif
+extern	int acpi_get_domain(device_t dev, device_t child, int *domain);
+extern	int acpi_parse_pxm(device_t dev, int *domain);
 
 #endif /* _KERNEL */
 #endif /* !_ACPIVAR_H_ */

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2013, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,7 +41,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#define __DTCOMPILE_C__
 #define _DECLARE_DT_GLOBALS
 
 #include <contrib/dev/acpica/compiler/aslcompiler.h>
@@ -103,13 +102,18 @@ DtDoCompile (
 
     /* Preprocessor */
 
-    Event = UtBeginEvent ("Preprocess input file");
-    PrDoPreprocess ();
-    UtEndEvent (Event);
-
-    if (Gbl_PreprocessOnly)
+    if (Gbl_PreprocessFlag)
     {
-        return (AE_OK);
+        /* Preprocessor */
+
+        Event = UtBeginEvent ("Preprocess input file");
+        PrDoPreprocess ();
+        UtEndEvent (Event);
+
+        if (Gbl_PreprocessOnly)
+        {
+            return (AE_OK);
+        }
     }
 
     /*
@@ -141,8 +145,6 @@ DtDoCompile (
     Status = DtCompileDataTable (&FieldList);
     UtEndEvent (Event);
 
-    DtFreeFieldList ();
-
     if (ACPI_FAILURE (Status))
     {
         /* TBD: temporary error message. Msgs should come from function above */
@@ -170,6 +172,8 @@ DtDoCompile (
 
 CleanupAndExit:
 
+    AcpiUtDeleteCaches ();
+    DtDeleteCaches ();
     CmCleanupAndExit ();
     return (Status);
 }
@@ -298,7 +302,7 @@ DtCompileDataTable (
         return (AE_ERROR);
     }
 
-    Gbl_Signature = UtLocalCalloc (ACPI_STRLEN (Signature) + 1);
+    Gbl_Signature = UtStringCacheCalloc (ACPI_STRLEN (Signature) + 1);
     strcpy (Gbl_Signature, Signature);
 
     /*
@@ -437,6 +441,7 @@ DtCompileTable (
     UINT8                   FieldType;
     UINT8                   *Buffer;
     UINT8                   *FlagBuffer = NULL;
+    char                    *String;
     UINT32                  CurrentFlagByteOffset = 0;
     ACPI_STATUS             Status;
 
@@ -446,18 +451,29 @@ DtCompileTable (
         return (AE_BAD_PARAMETER);
     }
 
+    /* Ignore optional subtable if name does not match */
+
+    if ((Info->Flags & DT_OPTIONAL) &&
+        ACPI_STRCMP ((*Field)->Name, Info->Name))
+    {
+        *RetSubtable = NULL;
+        return (AE_OK);
+    }
+
     Length = DtGetSubtableLength (*Field, Info);
     if (Length == ASL_EOF)
     {
         return (AE_ERROR);
     }
 
-    Subtable = UtLocalCalloc (sizeof (DT_SUBTABLE));
+    Subtable = UtSubtableCacheCalloc ();
 
     if (Length > 0)
     {
-        Subtable->Buffer = UtLocalCalloc (Length);
+        String = UtStringCacheCalloc (Length);
+        Subtable->Buffer = ACPI_CAST_PTR (UINT8, String);
     }
+
     Subtable->Length = Length;
     Subtable->TotalLength = Length;
     Buffer = Subtable->Buffer;
@@ -558,8 +574,6 @@ DtCompileTable (
             DtSetSubtableLength (InlineSubtable);
 
             ACPI_MEMCPY (Buffer, InlineSubtable->Buffer, FieldLength);
-            ACPI_FREE (InlineSubtable->Buffer);
-            ACPI_FREE (InlineSubtable);
             LocalField = *Field;
             break;
 

@@ -104,8 +104,10 @@ acpi_PkgStr(ACPI_OBJECT *res, int idx, void *dst, size_t size)
 }
 
 int
-acpi_PkgGas(ACPI_OBJECT *res, int idx, ACPI_GENERIC_ADDRESS *dst)
+acpi_PkgGas(device_t dev, ACPI_OBJECT *res, int idx, int *type, int *rid,
+    struct resource **dst, u_int flags)
 {
+    ACPI_GENERIC_ADDRESS gas;
     ACPI_OBJECT *obj;
 
     obj = &res->Package.Elements[idx];
@@ -113,7 +115,30 @@ acpi_PkgGas(ACPI_OBJECT *res, int idx, ACPI_GENERIC_ADDRESS *dst)
 	obj->Buffer.Length < sizeof(ACPI_GENERIC_ADDRESS) + 3)
 	return (EINVAL);
 
-    memcpy(dst, obj->Buffer.Pointer + 3, sizeof(*dst));
+    memcpy(&gas, obj->Buffer.Pointer + 3, sizeof(gas));
+
+    return (acpi_bus_alloc_gas(dev, type, rid, &gas, dst, flags));
+}
+
+int
+acpi_PkgFFH_IntelCpu(ACPI_OBJECT *res, int idx, int *vendor, int *class,
+    uint64_t *address, int *accsize)
+{
+    ACPI_GENERIC_ADDRESS gas;
+    ACPI_OBJECT *obj;
+
+    obj = &res->Package.Elements[idx];
+    if (obj == NULL || obj->Type != ACPI_TYPE_BUFFER ||
+	obj->Buffer.Length < sizeof(ACPI_GENERIC_ADDRESS) + 3)
+	return (EINVAL);
+
+    memcpy(&gas, obj->Buffer.Pointer + 3, sizeof(gas));
+    if (gas.SpaceId != ACPI_ADR_SPACE_FIXED_HARDWARE)
+	return (ERESTART);
+    *vendor = gas.BitWidth;
+    *class = gas.BitOffset;
+    *address = gas.Address;
+    *accsize = gas.AccessWidth;
     return (0);
 }
 

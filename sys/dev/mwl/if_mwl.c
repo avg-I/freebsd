@@ -1434,7 +1434,7 @@ mwl_start(struct ifnet *ifp)
 		 * Pass the frame to the h/w for transmission.
 		 */
 		if (mwl_tx_start(sc, ni, bf, m)) {
-			ifp->if_oerrors++;
+			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 			mwl_puttxbuf_head(txq, bf);
 			ieee80211_free_node(ni);
 			continue;
@@ -1504,7 +1504,7 @@ mwl_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 	 * Pass the frame to the h/w for transmission.
 	 */
 	if (mwl_tx_start(sc, ni, bf, m)) {
-		ifp->if_oerrors++;
+		if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 		mwl_puttxbuf_head(txq, bf);
 
 		ieee80211_free_node(ni);
@@ -2056,9 +2056,10 @@ mwl_desc_setup(struct mwl_softc *sc, const char *name,
 
 	ds = dd->dd_desc;
 	memset(ds, 0, dd->dd_desc_len);
-	DPRINTF(sc, MWL_DEBUG_RESET, "%s: %s DMA map: %p (%lu) -> %p (%lu)\n",
+	DPRINTF(sc, MWL_DEBUG_RESET,
+	    "%s: %s DMA map: %p (%lu) -> 0x%jx (%lu)\n",
 	    __func__, dd->dd_name, ds, (u_long) dd->dd_desc_len,
-	    (caddr_t) dd->dd_desc_paddr, /*XXX*/ (u_long) dd->dd_desc_len);
+	    (uintmax_t) dd->dd_desc_paddr, /*XXX*/ (u_long) dd->dd_desc_len);
 
 	return 0;
 fail2:
@@ -2741,7 +2742,7 @@ mwl_rx_proc(void *arg, int npending)
 #endif
 		status = ds->Status;
 		if (status & EAGLE_RXD_STATUS_DECRYPT_ERR_MASK) {
-			ifp->if_ierrors++;
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 			sc->sc_stats.mst_rx_crypto++;
 			/*
 			 * NB: Check EAGLE_RXD_STATUS_GENERAL_DECRYPT_ERR
@@ -2887,7 +2888,7 @@ mwl_rx_proc(void *arg, int npending)
 			ieee80211_dump_pkt(ic, mtod(m, caddr_t),
 			    len, ds->Rate, rssi);
 		}
-		ifp->if_ipackets++;
+		if_inc_counter(ifp, IFCOUNTER_IPACKETS, 1);
 
 		/* dispatch */
 		ni = ieee80211_find_rxnode(ic,
@@ -3405,7 +3406,7 @@ mwl_tx_start(struct mwl_softc *sc, struct ieee80211_node *ni, struct mwl_txbuf *
 	STAILQ_INSERT_TAIL(&txq->active, bf, bf_list);
 	MWL_TXDESC_SYNC(txq, ds, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
-	ifp->if_opackets++;
+	if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 	sc->sc_tx_timer = 5;
 	MWL_TXQ_UNLOCK(txq);
 
@@ -4688,11 +4689,10 @@ mwl_printrxbuf(const struct mwl_rxbuf *bf, u_int ix)
 	const struct mwl_rxdesc *ds = bf->bf_desc;
 	uint32_t status = le32toh(ds->Status);
 
-	printf("R[%2u] (DS.V:%p DS.P:%p) NEXT:%08x DATA:%08x RC:%02x%s\n"
+	printf("R[%2u] (DS.V:%p DS.P:0x%jx) NEXT:%08x DATA:%08x RC:%02x%s\n"
 	       "      STAT:%02x LEN:%04x RSSI:%02x CHAN:%02x RATE:%02x QOS:%04x HT:%04x\n",
-	    ix, ds, (const struct mwl_desc *)bf->bf_daddr,
-	    le32toh(ds->pPhysNext), le32toh(ds->pPhysBuffData),
-	    ds->RxControl, 
+	    ix, ds, (uintmax_t)bf->bf_daddr, le32toh(ds->pPhysNext),
+	    le32toh(ds->pPhysBuffData), ds->RxControl, 
 	    ds->RxControl != EAGLE_RXD_CTRL_DRIVER_OWN ?
 	        "" : (status & EAGLE_RXD_STATUS_OK) ? " *" : " !",
 	    ds->Status, le16toh(ds->PktLen), ds->RSSI, ds->Channel,
@@ -4706,8 +4706,7 @@ mwl_printtxbuf(const struct mwl_txbuf *bf, u_int qnum, u_int ix)
 	uint32_t status = le32toh(ds->Status);
 
 	printf("Q%u[%3u]", qnum, ix);
-	printf(" (DS.V:%p DS.P:%p)\n",
-	    ds, (const struct mwl_txdesc *)bf->bf_daddr);
+	printf(" (DS.V:%p DS.P:0x%jx)\n", ds, (uintmax_t)bf->bf_daddr);
 	printf("    NEXT:%08x DATA:%08x LEN:%04x STAT:%08x%s\n",
 	    le32toh(ds->pPhysNext),
 	    le32toh(ds->PktPtr), le16toh(ds->PktLen), status,
@@ -4785,7 +4784,7 @@ mwl_watchdog(void *arg)
 		mwl_reset(ifp);
 mwl_txq_dump(&sc->sc_txq[0]);/*XXX*/
 #endif
-		ifp->if_oerrors++;
+		if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 		sc->sc_stats.mst_watchdog++;
 	}
 }
@@ -4928,8 +4927,10 @@ mwl_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	case SIOCGMVSTATS:
 		mwl_hal_gethwstats(sc->sc_mh, &sc->sc_stats.hw_stats);
 		/* NB: embed these numbers to get a consistent view */
-		sc->sc_stats.mst_tx_packets = ifp->if_opackets;
-		sc->sc_stats.mst_rx_packets = ifp->if_ipackets;
+		sc->sc_stats.mst_tx_packets =
+		    ifp->if_get_counter(ifp, IFCOUNTER_OPACKETS);
+		sc->sc_stats.mst_rx_packets =
+		    ifp->if_get_counter(ifp, IFCOUNTER_IPACKETS);
 		/*
 		 * NB: Drop the softc lock in case of a page fault;
 		 * we'll accept any potential inconsisentcy in the

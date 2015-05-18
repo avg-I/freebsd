@@ -69,6 +69,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
 
+#include <machine/armreg.h>
 #include <machine/asm.h>
 #include <machine/cpu.h>
 #include <machine/frame.h>
@@ -83,6 +84,10 @@ __FBSDID("$FreeBSD$");
 
 #ifdef KDB
 #include <machine/db_machdep.h>
+#endif
+
+#ifdef KDTRACE_HOOKS
+int (*dtrace_invop_jump_addr)(struct trapframe *);
 #endif
 
 static int gdb_trapper(u_int, u_int, struct trapframe *, int);
@@ -180,8 +185,10 @@ undefinedinstruction(struct trapframe *frame)
 	ksiginfo_t ksi;
 
 	/* Enable interrupts if they were enabled before the exception. */
-	if (!(frame->tf_spsr & I32_bit))
-		enable_interrupts(I32_bit|F32_bit);
+	if (__predict_true(frame->tf_spsr & PSR_I) == 0)
+		enable_interrupts(PSR_I);
+	if (__predict_true(frame->tf_spsr & PSR_F) == 0)
+		enable_interrupts(PSR_F);
 
 	PCPU_INC(cnt.v_trap);
 
@@ -283,7 +290,14 @@ undefinedinstruction(struct trapframe *frame)
 			printf("No debugger in kernel.\n");
 #endif
 			return;
-		} else
+		}
+#ifdef KDTRACE_HOOKS
+		else if (dtrace_invop_jump_addr != 0) {
+			dtrace_invop_jump_addr(frame);
+			return;
+		}
+#endif
+		else
 			panic("Undefined instruction in kernel.\n");
 	}
 

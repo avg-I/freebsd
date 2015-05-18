@@ -5,6 +5,7 @@
 SUBDIR=	${_dtrace} \
 	${_dtruss} \
 	${_lockstat} \
+	${_plockstat} \
 	${_tests} \
 	${_zdb} \
 	${_zhack}
@@ -21,6 +22,15 @@ _zhack=	zhack
 .endif
 
 .if ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "i386"
+_dtrace=	dtrace
+_dtruss=	dtruss
+_lockstat=	lockstat
+.if defined(WITH_PLOCKSTAT)
+_plockstat=	plockstat
+.endif
+.endif
+
+.if ${MACHINE_CPUARCH} == "arm"
 _dtrace=	dtrace
 _dtruss=	dtruss
 _lockstat=	lockstat

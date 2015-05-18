@@ -126,9 +126,10 @@ bsd_to_linux_sigaltstack(int bsa)
 int
 linux_execve(struct thread *td, struct linux_execve_args *args)
 {
-	int error;
-	char *newpath;
 	struct image_args eargs;
+	struct vmspace *oldvmspace;
+	char *newpath;
+	int error;
 
 	LCONVPATHEXIST(td, args->path, &newpath);
 
@@ -137,12 +138,17 @@ linux_execve(struct thread *td, struct linux_execve_args *args)
 		printf(ARGS(execve, "%s"), newpath);
 #endif
 
+	error = pre_execve(td, &oldvmspace);
+	if (error != 0) {
+		free(newpath, M_TEMP);
+		return (error);
+	}
 	error = exec_copyin_args(&eargs, newpath, UIO_SYSSPACE,
 	    args->argp, args->envp);
 	free(newpath, M_TEMP);
 	if (error == 0)
 		error = kern_execve(td, &eargs, NULL);
-	if (error == 0)
+	if (error == 0) {
 	   	/* linux process can exec fbsd one, dont attempt
 		 * to create emuldata for such process using
 		 * linux_proc_init, this leads to a panic on KASSERT
@@ -150,6 +156,8 @@ linux_execve(struct thread *td, struct linux_execve_args *args)
 		 */
 		if (SV_PROC_ABI(td->td_proc) == SV_ABI_LINUX)
    			error = linux_proc_init(td, 0, 0);
+	}
+	post_execve(td, error, oldvmspace);
 	return (error);
 }
 
@@ -978,37 +986,6 @@ linux_get_thread_area(struct thread *td, struct linux_get_thread_area_args *args
 	   	return (EFAULT);
 
 	return (0);
-}
-
-/* copied from kern/kern_time.c */
-int
-linux_timer_create(struct thread *td, struct linux_timer_create_args *args)
-{
-   	return sys_ktimer_create(td, (struct ktimer_create_args *) args);
-}
-
-int
-linux_timer_settime(struct thread *td, struct linux_timer_settime_args *args)
-{
-   	return sys_ktimer_settime(td, (struct ktimer_settime_args *) args);
-}
-
-int
-linux_timer_gettime(struct thread *td, struct linux_timer_gettime_args *args)
-{
-   	return sys_ktimer_gettime(td, (struct ktimer_gettime_args *) args);
-}
-
-int
-linux_timer_getoverrun(struct thread *td, struct linux_timer_getoverrun_args *args)
-{
-   	return sys_ktimer_getoverrun(td, (struct ktimer_getoverrun_args *) args);
-}
-
-int
-linux_timer_delete(struct thread *td, struct linux_timer_delete_args *args)
-{
-   	return sys_ktimer_delete(td, (struct ktimer_delete_args *) args);
 }
 
 /* XXX: this wont work with module - convert it */

@@ -45,13 +45,6 @@
 
 #ifdef _KERNEL
 
-/*
- * CPU states for the purpose of communication using MONITOR+MWAIT.
- */
-#define	STATE_RUNNING	0x0
-#define	STATE_MWAIT	0x1
-#define	STATE_SLEEPING	0x2
-
 #define	cpu_exec(p)	/* nothing */
 #define	cpu_swapin(p)	/* nothing */
 #define	cpu_getstack(td)		((td)->td_frame->tf_rsp)

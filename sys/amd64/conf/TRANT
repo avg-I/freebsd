@@ -1,0 +1,242 @@
+
+ident		TRANT
+
+#machine 	amd64			#in DEFAULTS
+
+cpu		HAMMER
+options 	SMP			# dual-core
+
+makeoptions	DEBUG="-g -O"		# Build kernel with gdb(1) debug symbols
+makeoptions	WITH_CTF=1		# Build kernel with CTF for dtrace
+makeoptions	CONF_CFLAGS="-fno-optimize-sibling-calls" # for better DTrace fbt coverage
+
+options 	INCLUDE_CONFIG_FILE     # Include this file in kernel
+options 	MSGBUF_SIZE=131072
+
+options 	SCHED_ULE		#
+options 	PREEMPTION		# Enable kernel thread preemption
+options 	INTR_FILTER		# Filter ithread call in fast handler
+options 	INET			# InterNETworking
+options 	ZFS			# ZFS
+options 	FFS			# Berkeley Fast Filesystem
+options 	SOFTUPDATES		# Enable FFS soft updates support
+options 	UFS_ACL			# Support for access control lists
+options 	UFS_DIRHASH		# Improve performance on big directories
+options 	MD_ROOT			# MD is a potential root device
+options 	NFSCL			# New Network Filesystem Client
+options 	NFSD			# New Network Filesystem Server
+options 	NFSLOCKD		# Network Lock Manager
+options 	NFS_ROOT		# NFS usable as /, requires NFSCLIENT
+options 	TMPFS			# 
+options 	MSDOSFS			# MSDOS Filesystem
+options 	CD9660			# ISO 9660 Filesystem
+options 	NULLFS			# NULL filesystem
+options 	UNIONFS			# Union filesystem
+options 	LIBICONV		# Kernel side iconv library
+options 	CD9660_ICONV
+options 	MSDOSFS_ICONV
+options 	PSEUDOFS		# Pseudo-filesystem framework
+options 	PROCFS			# Process filesystem (requires PSEUDOFS)
+options 	FDESCFS			# fdescfs(5)
+options 	LINPROCFS
+options 	GEOM_LABEL		# Provides labelization
+options 	GEOM_MIRROR		# Disk mirroring.
+#options 	GEOM_PART_BSD		# BSD disklabel - in DEFAULTS
+options 	GEOM_PART_GPT		# GPT partitioning
+#options 	GEOM_PART_MBR		# MBR partitioning - in DEFAULTS
+nooption 	GEOM_BSD		# disable old partitioning options
+nooption 	GEOM_MBR		# that are set in DEFAULTS
+options 	GEOM_UZIP		# UZIP support
+options 	GEOM_UNCOMPRESS		# ULZMA support
+#options 	COMPAT_43TTY		# BSD 4.3 TTY compat [KEEP THIS!]
+#options 	COMPAT_FREEBSD6		# Compatible with FreeBSD6
+options         COMPAT_FREEBSD7
+#options 	COMPAT_IA32		# renamed, see below:
+options 	COMPAT_FREEBSD32	# I need this for the following
+options 	COMPAT_LINUX32		# Compatible with Linux i386 binaries
+options 	SCSI_DELAY=5000		# Delay (in ms) before probing SCSI
+options 	KTRACE			# ktrace(1) support
+options 	SYSVSHM			# SYSV-style shared memory
+options 	SYSVMSG			# SYSV-style message queues
+options 	SYSVSEM			# SYSV-style semaphores
+options 	P1003_1B_SEMAPHORES	# POSIX semaphores
+options 	_KPOSIX_PRIORITY_SCHEDULING # POSIX P1003_1B real-time extensions
+options 	KBD_INSTALL_CDEV	# install a CDEV entry in /dev
+options 	AUDIT			# Security event auditing
+
+options 	MAXPHYS="(2*1024U*1024)"	# 2MB - a large page size
+
+#options 	MAXDSIZ="(1024*1024*1024)" # good enough already
+options 	DFLDSIZ="(1024UL*1024*1024)"
+
+# should help with interlaced kernel log messages on SMP
+options 	PRINTF_BUFR_SIZE=128
+
+# Debugging options
+options 	STACK			#stack(9)
+options 	DDB			#Enable the kernel debugger
+options 	DDB_NUMSYM		#
+options 	KDB			#
+options 	KDB_TRACE		#
+options 	KDB_UNATTENDED
+
+#options	INVARIANTS		#Enable calls of extra sanity checking
+#options	INVARIANT_SUPPORT	#Extra sanity checks of internal structures, required by INVARIANTS
+#options	WITNESS			#Enable checks to detect deadlocks and cycles
+#options	WITNESS_SKIPSPIN	#Don't run witness on spinlocks for speed
+
+options 	KTR
+options 	KTR_ENTRIES="(256UL*1024)"
+##options 	KTR_COMPILE=KTR_ALL
+##options 	KTR_CPUMASK=0		#no tracing by default
+##options 	KTR_MASK=0		#set these via sysctl at runtime
+##options 	KTR_VERBOSE		#tracing goes to console
+#options 	KTR_COMPILE=(KTR_LOCK|KTR_PROC|KTR_INTR|KTR_CALLOUT|KTR_UMA|KTR_SYSC|KTR_SCHED)
+options 	KTR_COMPILE=(KTR_SCHED)
+
+options 	KDTRACE_HOOKS		# all architectures - enable general DTrace hooks
+options 	DDB_CTF			# all architectures - kernel ELF linker loads CTF data
+options 	KDTRACE_FRAME		# amd64-only
+
+#%## software watchdog: break to ddb or panic on hang
+#%#options 	SW_WATCHDOG
+
+# CPU frequency control
+device		cpufreq
+# amdtemp: on-die temperature sensor on AMD CPUs
+device          amdtemp
+# CPU MSRs access
+device		cpuctl
+# The hwpmc driver that allows the use of in-CPU performance monitoring
+# counters for performance monitoring.
+device		hwpmc
+options 	HWPMC_HOOKS
+
+# Sensors
+device		it		# ITE IT8705F/12F/16F Super I/O Hardware Monitor
+
+# SMB bus
+device          smbus           # Bus support, required for smb below.
+device          intpm		# now supports SB600/SB7xx
+device          smb
+
+# Bus support.
+device		acpi
+#device		isa			# in DEFAULTS
+device		pci
+
+# ATA and ATAPI devices
+device		ahci		# AHCI via CAM
+device		ata		# Legacy (P)ATA drivers
+options 	ATA_STATIC_ID	# Static device numbering
+# The following drivers are overriden by ATA_CAM
+#device		atadisk		# ATA disk drives
+#device		ataraid		# ATA RAID drives
+#device		atapicd		# ATAPI CDROM drives
+#device		atapicam	#
+
+## SCSI peripherals
+device		scbus		# SCSI bus (required for SCSI)
+device		da		# Direct Access (disks)
+device		cd		# CD
+device		pass		# Passthrough device (direct SCSI access)
+
+#
+device		nvram		# XXXTRANT
+options 	RTC_8BIT_EXTINDEX # this is AMD chipset
+
+# atkbdc0 controls both the keyboard and the PS/2 mouse
+device		atkbdc		# AT keyboard controller
+device		atkbd		# AT keyboard
+device		kbdmux		# keyboard multiplexer
+
+device		speaker		# system speaker
+
+# superceded by vt
+#options 	VESA		#
+#device		vga		# VGA video card driver
+
+#device		splash		# Splash screen and screen saver support
+
+# superceded by vt
+## syscons is the default console driver, resembling an SCO console
+#device		sc
+#options 	SC_PIXEL_MODE	# works with VESA+vga above
+options 	SC_MOUSE_CHAR=0x03
+options 	SC_HISTORY_SIZE=1000
+options 	SC_DISABLE_REBOOT
+
+device		vt
+device		vt_vga
+
+device		uart
+
+device		sound		# Generic sound driver
+device		snd_hda		# Hight Definition Audio
+
+device		agp		# AGP GART
+# modules:
+#device		drm		# DRM core module required by DRM drivers
+#device		radeondrm	# XXXTRANT
+
+# PCI Ethernet NICs that use the common MII bus controller code.
+# NOTE: Be sure to keep the 'device miibus' line in order to use these NICs!
+#device		miibus		# MII bus support
+device		mii		# Minimal MII support
+device		mii_bitbang	# Common module for bit-bang'ing the MII
+device		acphy		# MII bus support
+device		rgephy		# MII bus support
+device		dc		# DEC/Intel 21143 and various workalikes
+device		re		# XXXTRANT
+device		rl		# XXXTRANT
+#options 	DEVICE_POLLING	# enable polling NIC driver code
+
+options 	IPFIREWALL		#firewall
+options 	IPFIREWALL_VERBOSE	#print information about dropped packets
+options 	IPFIREWALL_VERBOSE_LIMIT=100	#limit verbosity
+options 	IPDIVERT		#divert sockets
+#options 	DUMMYNET		#trafic shaping - use module if needed
+
+# Pseudo devices.
+device		loop		# Network loopback
+device		random		# Entropy device
+device		ether		# Ethernet support
+device		tun		# Packet tunnel.
+device		tap		# Virtual Ethernet driver
+device		gif		# IPv6 and IPv4 tunneling
+device		pty		# Pseudo-ttys (telnet etc)
+device		md		# Memory "disks"
+device		firmware	# firmware assist module
+
+device		if_bridge	#Bridge interface
+
+# The `bpf' device enables the Berkeley Packet Filter.
+# Be aware of the administrative consequences of enabling this!
+# Note that 'bpf' is required for DHCP.
+device		bpf		# Berkeley packet filter
+
+## USB support - loaded via modules
+device		ehci		# EHCI PCI->USB interface
+device		ohci		# OHCI PCI->USB interface
+device		usb		# USB Bus (required)
+device		umass		# Disks/Mass storage - Requires scbus and da
+device		uhid		#
+device		ums		#
+device		ukbd		#
+
+# FireWire support
+device		firewire	# FireWire bus code
+device		sbp		# SCSI over FireWire (Requires scbus and da)
+#device		fwe		# Ethernet over FireWire (non-standard!)
+#device		fwip		# IP over FireWire (RFC 2734,3146)
+#device		dcons		# Dumb console driver
+#device		dcons_crom	# Configuration ROM for dcons
+
+# VirtIO support
+device		virtio			# Generic VirtIO bus (required)
+device		virtio_pci		# VirtIO PCI device
+device		vtnet			# VirtIO Ethernet device
+device		virtio_blk		# VirtIO Block device
+device		virtio_scsi		# VirtIO SCSI device
+device		virtio_balloon		# VirtIO Memory Balloon device
+

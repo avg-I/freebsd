@@ -64,7 +64,6 @@ unsigned char *bbase[MAXINP];		/* the base for each ilevel    */
 unsigned char *bp;			/* first available character   */
 unsigned char *endpbb;			/* end of push-back buffer     */
 
-
 /*
  * find the index of second str in the first str.
  */
@@ -350,23 +349,6 @@ xrealloc(void *old, size_t n, const char *fmt, ...)
 		}
 	}
 	return p;
-}
-
-/*
- * This is sqrt(SIZE_MAX+1), as s1*s2 <= SIZE_MAX
- * if both s1 < MUL_NO_OVERFLOW and s2 < MUL_NO_OVERFLOW
- */
-#define MUL_NO_OVERFLOW	(1UL << (sizeof(size_t) * 4))
-
-static void *
-reallocarray(void *optr, size_t nmemb, size_t size)
-{
-	if ((nmemb >= MUL_NO_OVERFLOW || size >= MUL_NO_OVERFLOW) &&
-	    nmemb > 0 && SIZE_MAX / nmemb < size) {
-		errno = ENOMEM;
-		return NULL;
-	}
-	return realloc(optr, size * nmemb);
 }
 
 void *
