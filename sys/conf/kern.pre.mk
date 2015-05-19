@@ -175,7 +175,7 @@ SDT_OBJ= ${SDT_ASFILE:.s=.o}
 .else
 SDT_OBJ=
 .endif
-SYSTEM_LD_PRE= ${LD} -r ${SYSTEM_OBJS} -o ${.TARGET}.reloc
+SYSTEM_LD_PRE= ${LD} -r ${SYSTEM_OBJS} -o ${.TARGET}
 SYSTEM_LD= ${LD} -Bdynamic -T ${LDSCRIPT} ${_LDFLAGS} --no-warn-mismatch \
 	--warn-common --export-dynamic --dynamic-linker /red/herring \
 	-o ${.TARGET} -X ${.TARGET}.reloc ${SDT_OBJ} vers.o hack.So
