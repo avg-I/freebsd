@@ -56,7 +56,7 @@ objdump -r -j .text $1 | fgrep __dtrace_sdt_call_ | while read off reltype relva
 	cat <<-EOF
 		.align 8
 		1:
-		.quad text + 0x${off}
+		.quad .text + 0x${off}
 		.asciz "${func}"
 
 		.pushsection set_sdt_calls, "a"
