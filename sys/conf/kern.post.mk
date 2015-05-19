@@ -121,16 +121,7 @@ gdbinit:
 .endif
 .endif
 
-.if ${MK_CTF} != "no"
-sdt_stubs.s: ${S}/tools/gen_sdt_stubs.sh ${FULLKERNEL}.reloc
-	sh ${S}/tools/gen_sdt_stubs.sh ${FULLKERNEL}.reloc > ${.TARGET}
-sdt_stubs.o: sdt_stubs.s
-.endif
-
-${FULLKERNEL}.reloc: ${SYSTEM_DEP}
-	${SYSTEM_LD_PRE}
-
-${FULLKERNEL}: ${FULLKERNEL}.reloc vers.o hack.So ${MFS_IMAGE} ${SDT_OBJ}
+${FULLKERNEL}: ${SYSTEM_DEP} vers.o ${MFS_IMAGE}
 	@rm -f ${.TARGET}
 	@echo linking ${.TARGET}
 	${SYSTEM_LD}
