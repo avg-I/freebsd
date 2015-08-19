@@ -286,6 +286,8 @@ ipw_attach(device_t dev)
 	IFQ_SET_READY(&ifp->if_snd);
 
 	ic->ic_ifp = ifp;
+	ic->ic_softc = sc;
+	ic->ic_name = device_get_nameunit(dev);
 	ic->ic_opmode = IEEE80211_M_STA;
 	ic->ic_phytype = IEEE80211_T_DS;
 
@@ -426,8 +428,7 @@ ipw_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ], int unit,
     const uint8_t bssid[IEEE80211_ADDR_LEN],
     const uint8_t mac[IEEE80211_ADDR_LEN])
 {
-	struct ifnet *ifp = ic->ic_ifp;
-	struct ipw_softc *sc = ifp->if_softc;
+	struct ipw_softc *sc = ic->ic_softc;
 	struct ipw_vap *ivp;
 	struct ieee80211vap *vap;
 	const struct firmware *fp;
@@ -751,11 +752,8 @@ ipw_release(struct ipw_softc *sc)
 	}
 
 	if (sc->tbd_dmat != NULL) {
-		if (sc->stbd_list != NULL) {
-			bus_dmamap_unload(sc->tbd_dmat, sc->tbd_map);
-			bus_dmamem_free(sc->tbd_dmat, sc->tbd_list,
-			    sc->tbd_map);
-		}
+		bus_dmamap_unload(sc->tbd_dmat, sc->tbd_map);
+		bus_dmamem_free(sc->tbd_dmat, sc->tbd_list, sc->tbd_map);
 		bus_dma_tag_destroy(sc->tbd_dmat);
 	}
 
@@ -867,7 +865,7 @@ ipw_media_status(struct ifnet *ifp, struct ifmediareq *imr)
 {
 	struct ieee80211vap *vap = ifp->if_softc;
 	struct ieee80211com *ic = vap->iv_ic;
-	struct ipw_softc *sc = ic->ic_ifp->if_softc;
+	struct ipw_softc *sc = ic->ic_softc;
 
 	/* read current transmission rate from adapter */
 	vap->iv_bss->ni_txrate = ipw_cvtrate(
@@ -880,8 +878,7 @@ ipw_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 {
 	struct ipw_vap *ivp = IPW_VAP(vap);
 	struct ieee80211com *ic = vap->iv_ic;
-	struct ifnet *ifp = ic->ic_ifp;
-	struct ipw_softc *sc = ifp->if_softc;
+	struct ipw_softc *sc = ic->ic_softc;
 	enum ieee80211_state ostate;
 
 	DPRINTF(("%s: %s -> %s flags 0x%x\n", __func__,
@@ -1582,8 +1579,8 @@ ipw_cmd(struct ipw_softc *sc, uint32_t type, void *data, uint32_t len)
 static int
 ipw_tx_start(struct ifnet *ifp, struct mbuf *m0, struct ieee80211_node *ni)
 {
-	struct ipw_softc *sc = ifp->if_softc;
 	struct ieee80211com *ic = ifp->if_l2com;
+	struct ipw_softc *sc = ic->ic_softc;
 	struct ieee80211vap *vap = ni->ni_vap;
 	struct ieee80211_frame *wh;
 	struct ipw_soft_bd *sbd;
@@ -2218,8 +2215,7 @@ ipw_setchannel(struct ipw_softc *sc, struct ieee80211_channel *chan)
 static void
 ipw_assoc(struct ieee80211com *ic, struct ieee80211vap *vap)
 {
-	struct ifnet *ifp = vap->iv_ic->ic_ifp;
-	struct ipw_softc *sc = ifp->if_softc;
+	struct ipw_softc *sc = ic->ic_softc;
 	struct ieee80211_node *ni = vap->iv_bss;
 	struct ipw_security security;
 	uint32_t data;
@@ -2310,9 +2306,8 @@ done:
 static void
 ipw_disassoc(struct ieee80211com *ic, struct ieee80211vap *vap)
 {
-	struct ifnet *ifp = vap->iv_ic->ic_ifp;
 	struct ieee80211_node *ni = vap->iv_bss;
-	struct ipw_softc *sc = ifp->if_softc;
+	struct ipw_softc *sc = ic->ic_softc;
 
 	IPW_LOCK(sc);
 	DPRINTF(("Disassociate from %6D\n", ni->ni_bssid, ":"));
@@ -2678,8 +2673,7 @@ ipw_write_mem_1(struct ipw_softc *sc, bus_size_t offset, const uint8_t *datap,
 static void
 ipw_scan_start(struct ieee80211com *ic)
 {
-	struct ifnet *ifp = ic->ic_ifp;
-	struct ipw_softc *sc = ifp->if_softc;
+	struct ipw_softc *sc = ic->ic_softc;
 
 	IPW_LOCK(sc);
 	ipw_scan(sc);
@@ -2689,8 +2683,7 @@ ipw_scan_start(struct ieee80211com *ic)
 static void
 ipw_set_channel(struct ieee80211com *ic)
 {
-	struct ifnet *ifp = ic->ic_ifp;
-	struct ipw_softc *sc = ifp->if_softc;
+	struct ipw_softc *sc = ic->ic_softc;
 
 	IPW_LOCK(sc);
 	if (ic->ic_opmode == IEEE80211_M_MONITOR) {
@@ -2716,8 +2709,7 @@ ipw_scan_mindwell(struct ieee80211_scan_state *ss)
 static void
 ipw_scan_end(struct ieee80211com *ic)
 {
-	struct ifnet *ifp = ic->ic_ifp;
-	struct ipw_softc *sc = ifp->if_softc;
+	struct ipw_softc *sc = ic->ic_softc;
 
 	IPW_LOCK(sc);
 	sc->flags &= ~IPW_FLAG_SCANNING;

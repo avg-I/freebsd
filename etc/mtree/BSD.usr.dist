@@ -19,7 +19,7 @@
         aout
         ..
         clang
-            3.6.0
+            3.6.1
                 include
                 ..
                 lib
@@ -718,6 +718,8 @@
             ja_JP.UTF-8
             ..
             ja_JP.eucJP
+            ..
+            kk_Cyrl_KZ.UTF-8
             ..
             kk_KZ.PT154
             ..

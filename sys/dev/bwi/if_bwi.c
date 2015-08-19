@@ -113,7 +113,7 @@ static void	bwi_scan_start(struct ieee80211com *);
 static void	bwi_set_channel(struct ieee80211com *);
 static void	bwi_scan_end(struct ieee80211com *);
 static int	bwi_newstate(struct ieee80211vap *, enum ieee80211_state, int);
-static void	bwi_updateslot(struct ifnet *);
+static void	bwi_updateslot(struct ieee80211com *);
 static int	bwi_media_change(struct ifnet *);
 
 static void	bwi_calibrate(void *);
@@ -446,6 +446,10 @@ bwi_attach(struct bwi_softc *sc)
 	if (error)
 		goto fail;
 
+	error = bwi_mac_fw_alloc(mac);
+	if (error)
+		goto fail;
+
 	ifp = sc->sc_ifp = if_alloc(IFT_IEEE80211);
 	if (ifp == NULL) {
 		device_printf(dev, "can not if_alloc()\n");
@@ -507,6 +511,8 @@ bwi_attach(struct bwi_softc *sc)
 	ieee80211_init_channels(ic, NULL, &bands);
 
 	ic->ic_ifp = ifp;
+	ic->ic_softc = sc;
+	ic->ic_name = device_get_nameunit(dev);
 	ic->ic_caps = IEEE80211_C_STA |
 		      IEEE80211_C_SHSLOT |
 		      IEEE80211_C_SHPREAMBLE |
@@ -1438,7 +1444,7 @@ bwi_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 {
 	struct ieee80211com *ic = ni->ni_ic;
 	struct ifnet *ifp = ic->ic_ifp;
-	struct bwi_softc *sc = ifp->if_softc;
+	struct bwi_softc *sc = ic->ic_softc;
 	/* XXX wme? */
 	struct bwi_txbuf_data *tbd = &sc->sc_tx_bdata[BWI_TX_DATA_RING];
 	int idx, error;
@@ -1722,7 +1728,7 @@ bwi_intr(void *xsc)
 static void
 bwi_scan_start(struct ieee80211com *ic)
 {
-	struct bwi_softc *sc = ic->ic_ifp->if_softc;
+	struct bwi_softc *sc = ic->ic_softc;
 
 	BWI_LOCK(sc);
 	/* Enable MAC beacon promiscuity */
@@ -1733,7 +1739,7 @@ bwi_scan_start(struct ieee80211com *ic)
 static void
 bwi_set_channel(struct ieee80211com *ic)
 {
-	struct bwi_softc *sc = ic->ic_ifp->if_softc;
+	struct bwi_softc *sc = ic->ic_softc;
 	struct ieee80211_channel *c = ic->ic_curchan;
 	struct bwi_mac *mac;
 
@@ -1759,7 +1765,7 @@ bwi_set_channel(struct ieee80211com *ic)
 static void
 bwi_scan_end(struct ieee80211com *ic)
 {
-	struct bwi_softc *sc = ic->ic_ifp->if_softc;
+	struct bwi_softc *sc = ic->ic_softc;
 
 	BWI_LOCK(sc);
 	CSR_CLRBITS_4(sc, BWI_MAC_STATUS, BWI_MAC_STATUS_PASS_BCN);
@@ -1770,10 +1776,9 @@ static int
 bwi_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 {
 	struct bwi_vap *bvp = BWI_VAP(vap);
-	struct ieee80211com *ic= vap->iv_ic;
-	struct ifnet *ifp = ic->ic_ifp;
+	struct ieee80211com *ic = vap->iv_ic;
 	enum ieee80211_state ostate = vap->iv_state;
-	struct bwi_softc *sc = ifp->if_softc;
+	struct bwi_softc *sc = ic->ic_softc;
 	struct bwi_mac *mac;
 	int error;
 
@@ -1919,7 +1924,7 @@ bwi_dma_alloc(struct bwi_softc *sc)
 			       BUS_SPACE_MAXSIZE,	/* maxsize */
 			       BUS_SPACE_UNRESTRICTED,	/* nsegments */
 			       BUS_SPACE_MAXSIZE_32BIT,	/* maxsegsize */
-			       BUS_DMA_ALLOCNOW,	/* flags */
+			       0,			/* flags */
 			       NULL, NULL,		/* lockfunc, lockarg */
 			       &sc->sc_parent_dtag);
 	if (error) {
@@ -1939,8 +1944,8 @@ bwi_dma_alloc(struct bwi_softc *sc)
 				NULL, NULL,
 				tx_ring_sz,
 				1,
-				BUS_SPACE_MAXSIZE_32BIT,
-				BUS_DMA_ALLOCNOW,
+				tx_ring_sz,
+				0,
 				NULL, NULL,
 				&sc->sc_txring_dtag);
 	if (error) {
@@ -1969,8 +1974,8 @@ bwi_dma_alloc(struct bwi_softc *sc)
 				NULL, NULL,
 				rx_ring_sz,
 				1,
-				BUS_SPACE_MAXSIZE_32BIT,
-				BUS_DMA_ALLOCNOW,
+				rx_ring_sz,
+				0,
 				NULL, NULL,
 				&sc->sc_rxring_dtag);
 	if (error) {
@@ -2094,8 +2099,8 @@ bwi_dma_txstats_alloc(struct bwi_softc *sc, uint32_t ctrl_base,
 				NULL, NULL,
 				dma_size,
 				1,
-				BUS_SPACE_MAXSIZE_32BIT,
-				BUS_DMA_ALLOCNOW,
+				dma_size,
+				0,
 				NULL, NULL,
 				&st->stats_ring_dtag);
 	if (error) {
@@ -2142,8 +2147,8 @@ bwi_dma_txstats_alloc(struct bwi_softc *sc, uint32_t ctrl_base,
 				NULL, NULL,
 				dma_size,
 				1,
-				BUS_SPACE_MAXSIZE_32BIT,
-				BUS_DMA_ALLOCNOW,
+				dma_size,
+				0,
 				NULL, NULL,
 				&st->stats_dtag);
 	if (error) {
@@ -2225,7 +2230,7 @@ bwi_dma_mbuf_create(struct bwi_softc *sc)
 				NULL, NULL,
 				MCLBYTES,
 				1,
-				BUS_SPACE_MAXSIZE_32BIT,
+				MCLBYTES,
 				BUS_DMA_ALLOCNOW,
 				NULL, NULL,
 				&sc->sc_buf_dtag);
@@ -3733,14 +3738,13 @@ bwi_set_bssid(struct bwi_softc *sc, const uint8_t *bssid)
 }
 
 static void
-bwi_updateslot(struct ifnet *ifp)
+bwi_updateslot(struct ieee80211com *ic)
 {
-	struct bwi_softc *sc = ifp->if_softc;
-	struct ieee80211com *ic = ifp->if_l2com;
+	struct bwi_softc *sc = ic->ic_softc;
 	struct bwi_mac *mac;
 
 	BWI_LOCK(sc);
-	if (ifp->if_drv_flags & IFF_DRV_RUNNING) {
+	if (ic->ic_ifp->if_drv_flags & IFF_DRV_RUNNING) {
 		DPRINTF(sc, BWI_DBG_80211, "%s\n", __func__);
 
 		KASSERT(sc->sc_cur_regwin->rw_type == BWI_REGWIN_T_MAC,

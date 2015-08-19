@@ -77,6 +77,8 @@ LIBUBOOT_FDT=	${.OBJDIR}/../../uboot/fdt/libuboot_fdt.a
 LIBFDT=		${.OBJDIR}/../../fdt/libfdt.a
 .endif
 
+CFLAGS+=	-DNETIF_OPEN_CLOSE_ONCE
+
 .if ${MK_FORTH} != "no"
 # Enable BootForth
 BOOT_FORTH=	yes
@@ -130,11 +132,11 @@ ldscript.abs:
 ldscript.pie:
 	echo "UBLDR_LOADADDR = 0;" >${.TARGET}
 
-ubldr: ${OBJS} ldscript.abs ${.CURDIR}/ldscript.${MACHINE_CPUARCH}
+ubldr: ${OBJS} ldscript.abs ${.CURDIR}/ldscript.${MACHINE_CPUARCH} ${DPADD}
 	${CC} ${CFLAGS} -T ldscript.abs ${LDFLAGS} \
 	    -o ${.TARGET} ${OBJS} ${LDADD}
 
-ubldr.pie: ${OBJS} ldscript.pie ${.CURDIR}/ldscript.${MACHINE_CPUARCH}
+ubldr.pie: ${OBJS} ldscript.pie ${.CURDIR}/ldscript.${MACHINE_CPUARCH} ${DPADD}
 	${CC} ${CFLAGS} -T ldscript.pie ${LDFLAGS} -pie -Wl,-Bsymbolic \
 	    -o ${.TARGET} ${OBJS} ${LDADD}
 
@@ -147,10 +149,9 @@ CLEANFILES+=	ldscript.abs ldscript.pie ubldr ubldr.pie ubldr.bin
 .PATH: ${.CURDIR}/../../forth
 .include	"${.CURDIR}/../../forth/Makefile.inc"
 
-# Put sample loader.rc and menu.rc on disk but don't enable them
-# by default.
+# Install loader.rc.
 FILES+=	loader.rc
-FILESNAME_loader.rc=	loader.rc.sample
+# Put sample menu.rc on disk but don't enable it by default.
 FILES+=	menu.rc
 FILESNAME_menu.rc=	menu.rc.sample
 .endif

@@ -163,13 +163,13 @@ wtap_media_change(struct ifnet *ifp)
  */
 static void
 wtap_recv_mgmt(struct ieee80211_node *ni, struct mbuf *m,
-    int subtype, int rssi, int nf)
+    int subtype, const struct ieee80211_rx_stats *stats, int rssi, int nf)
 {
 	struct ieee80211vap *vap = ni->ni_vap;
 #if 0
 	DWTAP_PRINTF("[%d] %s\n", myath_id(ni), __func__);
 #endif
-	WTAP_VAP(vap)->av_recv_mgmt(ni, m, subtype, rssi, nf);
+	WTAP_VAP(vap)->av_recv_mgmt(ni, m, subtype, stats, rssi, nf);
 }
 
 static int
@@ -702,14 +702,14 @@ wtap_wme_update(struct ieee80211com *ic)
 }
 
 static void
-wtap_update_mcast(struct ifnet *ifp)
+wtap_update_mcast(struct ieee80211com *ic)
 {
 
 	DWTAP_PRINTF("%s\n", __func__);
 }
 
 static void
-wtap_update_promisc(struct ifnet *ifp)
+wtap_update_promisc(struct ieee80211com *ic)
 {
 
 	DWTAP_PRINTF("%s\n", __func__);
@@ -797,6 +797,8 @@ wtap_attach(struct wtap_softc *sc, const uint8_t *macaddr)
 	IFQ_SET_READY(&ifp->if_snd);
 
 	ic->ic_ifp = ifp;
+	ic->ic_softc = sc;
+	ic->ic_name = sc->name;
 	ic->ic_phytype = IEEE80211_T_DS;
 	ic->ic_opmode = IEEE80211_M_MBSS;
 	ic->ic_caps = IEEE80211_C_MBSS;
@@ -827,9 +829,6 @@ wtap_attach(struct wtap_softc *sc, const uint8_t *macaddr)
 
 	/* override default methods */
 	ic->ic_newassoc = wtap_newassoc;
-#if 0
-	ic->ic_updateslot = myath_updateslot;
-#endif
 	ic->ic_wme.wme_update = wtap_wme_update;
 	ic->ic_vap_create = wtap_vap_create;
 	ic->ic_vap_delete = wtap_vap_delete;

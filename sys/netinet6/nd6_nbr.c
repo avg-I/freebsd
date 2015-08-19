@@ -68,7 +68,6 @@ __FBSDID("$FreeBSD$");
 #include <netinet/in.h>
 #include <netinet/in_var.h>
 #include <net/if_llatbl.h>
-#define	L3_ADDR_SIN6(le)	((struct sockaddr_in6 *) L3_ADDR(le))
 #include <netinet6/in6_var.h>
 #include <netinet6/in6_ifattach.h>
 #include <netinet/ip6.h>
@@ -898,7 +897,7 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 			struct nd_defrouter *dr;
 			struct in6_addr *in6;
 
-			in6 = &L3_ADDR_SIN6(ln)->sin6_addr;
+			in6 = &ln->r_l3addr.addr6;
 
 			/*
 			 * Lock to protect the default router list.
@@ -1445,10 +1444,9 @@ nd6_dad_timer(struct dadq *dp)
 		    dp->dad_ns_lcount > 0 &&
 		    dp->dad_ns_lcount > dp->dad_loopbackprobe) {
 			/*
-			 * A looped back probe is detected,
-			 * Sec. 4.1 in draft-ietf-6man-enhanced-dad-13
-			 * requires transmission of additional probes until
-			 * the loopback condition becomes clear.
+			 * Sec. 4.1 in RFC 7527 requires transmission of
+			 * additional probes until the loopback condition
+			 * becomes clear when a looped back probe is detected.
 			 */
 			log(LOG_ERR, "%s: a looped back NS message is "
 			    "detected during DAD for %s.  "
@@ -1456,16 +1454,6 @@ nd6_dad_timer(struct dadq *dp)
 			    if_name(ifa->ifa_ifp),
 			    ip6_sprintf(ip6buf, IFA_IN6(ifa)));
 			dp->dad_loopbackprobe = dp->dad_ns_lcount;
-			/*
-			 * An interface with IGNORELOOP is one which a
-			 * loopback is permanently expected while regular
-			 * traffic works.  In that case, stop DAD after
-			 * MAX_MULTICAST_SOLICIT number of NS messages
-			 * regardless of the number of received loopback NS
-			 * by increasing dad_loopbackprobe in advance.
-			 */
-			if (ND_IFINFO(ifa->ifa_ifp)->flags & ND6_IFF_IGNORELOOP)
-				dp->dad_loopbackprobe += V_nd6_mmaxtries;
 			/*
 			 * Send an NS immediately and increase dad_count by
 			 * V_nd6_mmaxtries - 1.

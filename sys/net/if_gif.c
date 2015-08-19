@@ -280,9 +280,9 @@ int
 gif_encapcheck(const struct mbuf *m, int off, int proto, void *arg)
 {
 	GIF_RLOCK_TRACKER;
+	const struct ip *ip;
 	struct gif_softc *sc;
 	int ret;
-	uint8_t ver;
 
 	sc = (struct gif_softc *)arg;
 	if (sc == NULL || (GIF2IFP(sc)->if_flags & IFF_UP) == 0)
@@ -309,11 +309,12 @@ gif_encapcheck(const struct mbuf *m, int off, int proto, void *arg)
 	}
 
 	/* Bail on short packets */
+	M_ASSERTPKTHDR(m);
 	if (m->m_pkthdr.len < sizeof(struct ip))
 		goto done;
 
-	m_copydata(m, 0, 1, &ver);
-	switch (ver >> 4) {
+	ip = mtod(m, const struct ip *);
+	switch (ip->ip_v) {
 #ifdef INET
 	case 4:
 		if (sc->gif_family != AF_INET)
@@ -920,6 +921,17 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 #endif
 		}
 		break;
+	case SIOCGTUNFIB:
+		ifr->ifr_fib = sc->gif_fibnum;
+		break;
+	case SIOCSTUNFIB:
+		if ((error = priv_check(curthread, PRIV_NET_GIF)) != 0)
+			break;
+		if (ifr->ifr_fib >= rt_numfibs)
+			error = EINVAL;
+		else
+			sc->gif_fibnum = ifr->ifr_fib;
+		break;
 	case GIFGOPTS:
 		options = sc->gif_options;
 		error = copyout(&options, ifr->ifr_data, sizeof(options));
@@ -935,7 +947,6 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		else
 			sc->gif_options = options;
 		break;
-
 	default:
 		error = EINVAL;
 		break;
