@@ -75,6 +75,7 @@ SUBDIR=	adduser \
 	sensorsd \
 	service \
 	services_mkdb \
+	sesutil \
 	setfib \
 	setfmac \
 	setpmac \
