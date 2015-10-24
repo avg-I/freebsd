@@ -1068,7 +1068,6 @@ ctlfe_adjust_cdb(struct ccb_accept_tio *atio, uint32_t offset)
 	}
 	case READ_16:
 	case WRITE_16:
-	case WRITE_ATOMIC_16:
 	{
 		struct scsi_rw_16 *cdb = (struct scsi_rw_16 *)cmdbyt;
 		lba = scsi_8btou64(cdb->addr);
@@ -1460,24 +1459,31 @@ ctlfedone(struct cam_periph *periph, union ccb *done_ccb)
 				    CTL_TASK_ABORT_TASK_SET;
 				break;
 			case MSG_TARGET_RESET:
-				io->taskio.task_action =
-					CTL_TASK_TARGET_RESET;
+				io->taskio.task_action = CTL_TASK_TARGET_RESET;
 				break;
 			case MSG_ABORT_TASK:
-				io->taskio.task_action =
-					CTL_TASK_ABORT_TASK;
+				io->taskio.task_action = CTL_TASK_ABORT_TASK;
 				break;
 			case MSG_LOGICAL_UNIT_RESET:
-				io->taskio.task_action =
-					CTL_TASK_LUN_RESET;
+				io->taskio.task_action = CTL_TASK_LUN_RESET;
 				break;
 			case MSG_CLEAR_TASK_SET:
 				io->taskio.task_action =
-					CTL_TASK_CLEAR_TASK_SET;
+				    CTL_TASK_CLEAR_TASK_SET;
 				break;
 			case MSG_CLEAR_ACA:
+				io->taskio.task_action = CTL_TASK_CLEAR_ACA;
+				break;
+			case MSG_QUERY_TASK:
+				io->taskio.task_action = CTL_TASK_QUERY_TASK;
+				break;
+			case MSG_QUERY_TASK_SET:
 				io->taskio.task_action =
-					CTL_TASK_CLEAR_ACA;
+				    CTL_TASK_QUERY_TASK_SET;
+				break;
+			case MSG_QUERY_ASYNC_EVENT:
+				io->taskio.task_action =
+				    CTL_TASK_QUERY_ASYNC_EVENT;
 				break;
 			case MSG_NOOP:
 				send_ctl_io = 0;
@@ -1880,7 +1886,7 @@ ctlfe_lun_disable(void *arg, int lun_id)
 
 		path = lun_softc->periph->path;
 
-		if ((xpt_path_target_id(path) == 0)
+		if ((xpt_path_target_id(path) == softc->target_id)
 		 && (xpt_path_lun_id(path) == lun_id)) {
 			break;
 		}

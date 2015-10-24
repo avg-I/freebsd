@@ -140,7 +140,7 @@ SHLIB_NAME_FULL=${SHLIB_NAME}.full
 # Use ${DEBUGDIR} for base system debug files, else .debug subdirectory
 .if ${_SHLIBDIR} == "/boot" ||\
     ${SHLIBDIR:C%/lib(/.*)?$%/lib%} == "/lib" ||\
-    ${SHLIBDIR:C%/usr/lib(32)?(/.*)?%/usr/lib%} == "/usr/lib"
+    ${SHLIBDIR:C%/usr/(tests/)?lib(32|exec)?(/.*)?%/usr/lib%} == "/usr/lib"
 DEBUGFILEDIR=${DEBUGDIR}${_SHLIBDIR}
 .else
 DEBUGFILEDIR=${_SHLIBDIR}/.debug
@@ -162,7 +162,7 @@ LDFLAGS+=	-Wl,--version-script=${VERSION_MAP}
 
 .if defined(LIB) && !empty(LIB) || defined(SHLIB_NAME)
 OBJS+=		${SRCS:N*.h:R:S/$/.o/}
-NOPATH_FILES+=	${OBJS}
+CLEANFILES+=	${OBJS} ${STATICOBJS}
 .endif
 
 .if defined(LIB) && !empty(LIB)
@@ -180,7 +180,7 @@ lib${LIB_PRIVATE}${LIB}.a: ${OBJS} ${STATICOBJS}
 .if ${MK_PROFILE} != "no" && defined(LIB) && !empty(LIB)
 _LIBS+=		lib${LIB_PRIVATE}${LIB}_p.a
 POBJS+=		${OBJS:.o=.po} ${STATICOBJS:.o=.po}
-NOPATH_FILES+=	${POBJS}
+CLEANFILES+=	${POBJS}
 
 lib${LIB_PRIVATE}${LIB}_p.a: ${POBJS}
 	@${ECHO} building profiled ${LIB} library
@@ -192,7 +192,7 @@ lib${LIB_PRIVATE}${LIB}_p.a: ${POBJS}
 .if defined(SHLIB_NAME) || \
     defined(INSTALL_PIC_ARCHIVE) && defined(LIB) && !empty(LIB)
 SOBJS+=		${OBJS:.o=.So}
-NOPATH_FILES+=	${SOBJS}
+CLEANFILES+=	${SOBJS}
 .endif
 
 .if defined(SHLIB_NAME)
@@ -238,7 +238,9 @@ ${SHLIB_LINK:R}.ld: ${.CURDIR}/${SHLIB_LDSCRIPT}
 	    ${.ALLSRC} > ${.TARGET}
 
 ${SHLIB_NAME_FULL}: ${SHLIB_LINK:R}.ld
+CLEANFILES+=	${SHLIB_LINK:R}.ld
 .endif
+CLEANFILES+=	${SHLIB_LINK}
 .endif
 
 ${SHLIB_NAME_FULL}: ${SOBJS}
@@ -279,7 +281,7 @@ lib${LIB_PRIVATE}${LIB}_pic.a: ${SOBJS}
 LINTLIB=	llib-l${LIB}.ln
 _LIBS+=		${LINTLIB}
 LINTOBJS+=	${SRCS:M*.c:.c=.ln}
-NOPATH_FILES+=	${LINTOBJS}
+CLEANFILES+=	${LINTOBJS}
 
 ${LINTLIB}: ${LINTOBJS}
 	@${ECHO} building lint library ${.TARGET}
@@ -292,7 +294,10 @@ ${LINTLIB}: ${LINTOBJS}
 .if defined(_SKIP_BUILD)
 all:
 .else
+.if defined(_LIBS) && !empty(_LIBS)
 all: ${_LIBS}
+CLEANFILES+=	${_LIBS}
+.endif
 
 .if ${MK_MAN} != "no" && !defined(LIBRARIES_ONLY)
 all: _manpages
@@ -334,23 +339,23 @@ realinstall: _libinstall
 _libinstall:
 .if defined(LIB) && !empty(LIB) && ${MK_INSTALLLIB} != "no"
 	${INSTALL} -C -o ${LIBOWN} -g ${LIBGRP} -m ${LIBMODE} \
-	    ${_INSTALLFLAGS} lib${LIB_PRIVATE}${LIB}.a ${DESTDIR}${_LIBDIR}
+	    ${_INSTALLFLAGS} lib${LIB_PRIVATE}${LIB}.a ${DESTDIR}${_LIBDIR}/
 .endif
 .if ${MK_PROFILE} != "no" && defined(LIB) && !empty(LIB)
 	${INSTALL} -C -o ${LIBOWN} -g ${LIBGRP} -m ${LIBMODE} \
-	    ${_INSTALLFLAGS} lib${LIB_PRIVATE}${LIB}_p.a ${DESTDIR}${_LIBDIR}
+	    ${_INSTALLFLAGS} lib${LIB_PRIVATE}${LIB}_p.a ${DESTDIR}${_LIBDIR}/
 .endif
 .if defined(SHLIB_NAME)
 	${INSTALL} ${STRIP} -o ${LIBOWN} -g ${LIBGRP} -m ${LIBMODE} \
 	    ${_INSTALLFLAGS} ${_SHLINSTALLFLAGS} \
-	    ${SHLIB_NAME} ${DESTDIR}${_SHLIBDIR}
+	    ${SHLIB_NAME} ${DESTDIR}${_SHLIBDIR}/
 .if ${MK_DEBUG_FILES} != "no"
 .if defined(DEBUGMKDIR)
-	${INSTALL} -T debug -d ${DESTDIR}${DEBUGFILEDIR}
+	${INSTALL} -T debug -d ${DESTDIR}${DEBUGFILEDIR}/
 .endif
 	${INSTALL} -T debug -o ${LIBOWN} -g ${LIBGRP} -m ${DEBUGMODE} \
 	    ${_INSTALLFLAGS} \
-	    ${SHLIB_NAME}.debug ${DESTDIR}${DEBUGFILEDIR}
+	    ${SHLIB_NAME}.debug ${DESTDIR}${DEBUGFILEDIR}/
 .endif
 .if defined(SHLIB_LINK)
 .if commands(${SHLIB_LINK:R}.ld)
@@ -373,11 +378,11 @@ _libinstall:
 .endif # SHIB_NAME
 .if defined(INSTALL_PIC_ARCHIVE) && defined(LIB) && !empty(LIB) && ${MK_TOOLCHAIN} != "no"
 	${INSTALL} -o ${LIBOWN} -g ${LIBGRP} -m ${LIBMODE} \
-	    ${_INSTALLFLAGS} lib${LIB}_pic.a ${DESTDIR}${_LIBDIR}
+	    ${_INSTALLFLAGS} lib${LIB}_pic.a ${DESTDIR}${_LIBDIR}/
 .endif
 .if defined(WANT_LINT) && !defined(NO_LINT) && defined(LIB) && !empty(LIB)
 	${INSTALL} -o ${LIBOWN} -g ${LIBGRP} -m ${LIBMODE} \
-	    ${_INSTALLFLAGS} ${LINTLIB} ${DESTDIR}${LINTLIBDIR}
+	    ${_INSTALLFLAGS} ${LINTLIB} ${DESTDIR}${LINTLIBDIR}/
 .endif
 .endif # !defined(INTERNALLIB)
 
@@ -385,6 +390,7 @@ _libinstall:
 .include <bsd.nls.mk>
 .include <bsd.files.mk>
 .include <bsd.incs.mk>
+.include <bsd.confs.mk>
 .endif
 
 .include <bsd.links.mk>
@@ -421,49 +427,6 @@ ${SOBJS}: ${SRCS:M*.h}
 ${_S:R}.So: ${_S}
 .endfor
 .endif
-.endif
-
-.if !target(clean)
-clean:
-.if defined(CLEANFILES) && !empty(CLEANFILES)
-	rm -f ${CLEANFILES}
-.endif
-.if defined(LIB) && !empty(LIB)
-	rm -f a.out ${OBJS} ${OBJS:S/$/.tmp/} ${STATICOBJS}
-.endif
-.if !defined(INTERNALLIB)
-.if ${MK_PROFILE} != "no" && defined(LIB) && !empty(LIB)
-	rm -f ${POBJS} ${POBJS:S/$/.tmp/}
-.endif
-.if defined(SHLIB_NAME) || \
-    defined(INSTALL_PIC_ARCHIVE) && defined(LIB) && !empty(LIB)
-	rm -f ${SOBJS} ${SOBJS:.So=.so} ${SOBJS:S/$/.tmp/}
-.endif
-.if defined(SHLIB_NAME)
-.if defined(SHLIB_LINK)
-.if defined(SHLIB_LDSCRIPT) && exists(${.CURDIR}/${SHLIB_LDSCRIPT})
-	rm -f lib${LIB}.ld
-.endif
-	rm -f ${SHLIB_LINK}
-.endif
-.endif # defined(SHLIB_NAME)
-.if defined(WANT_LINT) && defined(LIB) && !empty(LIB)
-	rm -f ${LINTOBJS}
-.endif
-.endif # !defined(INTERNALLIB)
-.if defined(_LIBS) && !empty(_LIBS)
-	rm -f ${_LIBS}
-.endif
-.if defined(CLEANDIRS) && !empty(CLEANDIRS)
-	rm -rf ${CLEANDIRS}
-.endif
-.if !empty(VERSION_DEF) && !empty(SYMBOL_MAPS)
-	rm -f ${VERSION_MAP}
-.endif
-.endif
-
-.if !empty(_LIBS)
-NOPATH_FILES+=	${_LIBS}
 .endif
 
 .include <bsd.obj.mk>

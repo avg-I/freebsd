@@ -1,5 +1,6 @@
 /*-
  * Copyright (c) 2003 Silicon Graphics International Corp.
+ * Copyright (c) 2014-2015 Alexander Motin <mav@FreeBSD.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -197,6 +198,8 @@ typedef enum {
 	CTL_MSG_PORT_SYNC,		/* Information about port. */
 	CTL_MSG_LUN_SYNC,		/* Information about LUN. */
 	CTL_MSG_IID_SYNC,		/* Information about initiator. */
+	CTL_MSG_LOGIN,			/* Information about HA peer. */
+	CTL_MSG_MODE_SYNC,		/* Mode page current content. */
 	CTL_MSG_FAILOVER		/* Fake, never sent though the wire */
 } ctl_msg_type;
 
@@ -221,8 +224,8 @@ struct ctl_io_hdr {
 	struct bintime	  start_bt;	/* Timer start ticks */
 	struct bintime	  dma_start_bt;	/* DMA start ticks */
 	struct bintime	  dma_bt;	/* DMA total ticks */
-	uint32_t	  num_dmas;	/* Number of DMAs */
 #endif /* CTL_TIME_IO */
+	uint32_t	  num_dmas;	/* Number of DMAs */
 	union ctl_io	  *original_sc;
 	union ctl_io	  *serializing_sc;
 	void		  *pool;	/* I/O pool */
@@ -356,6 +359,25 @@ struct ctl_taskio {
 	ctl_tag_type		tag_type;    /* simple, ordered, etc. */
 	uint8_t			task_status; /* Complete, Succeeded, etc. */
 	uint8_t			task_resp[3];/* Response information */
+};
+
+
+/*
+ * HA link messages.
+ */
+#define	CTL_HA_VERSION		1
+
+/*
+ * Used for CTL_MSG_LOGIN.
+ */
+struct ctl_ha_msg_login {
+	ctl_msg_type		msg_type;
+	int			version;
+	int			ha_mode;
+	int			ha_id;
+	int			max_luns;
+	int			max_ports;
+	int			max_init_per_port;
 };
 
 typedef enum {
@@ -513,6 +535,17 @@ struct ctl_ha_msg_iid {
 	uint8_t			data[];
 };
 
+/*
+ * Used for CTL_MSG_MODE_SYNC.
+ */
+struct ctl_ha_msg_mode {
+	struct ctl_ha_msg_hdr	hdr;
+	uint8_t			page_code;
+	uint8_t			subpage;
+	uint16_t		page_len;
+	uint8_t			data[];
+};
+
 union ctl_ha_msg {
 	struct ctl_ha_msg_hdr	hdr;
 	struct ctl_ha_msg_task	task;
@@ -523,15 +556,14 @@ union ctl_ha_msg {
 	struct ctl_ha_msg_port	port;
 	struct ctl_ha_msg_lun	lun;
 	struct ctl_ha_msg_iid	iid;
+	struct ctl_ha_msg_login	login;
+	struct ctl_ha_msg_mode	mode;
 };
-
 
 struct ctl_prio {
 	struct ctl_io_hdr  io_hdr;
 	struct ctl_ha_msg_pr pr_msg;
 };
-
-
 
 union ctl_io {
 	struct ctl_io_hdr io_hdr;	/* common to all I/O types */
@@ -546,7 +578,6 @@ union ctl_io *ctl_alloc_io(void *pool_ref);
 union ctl_io *ctl_alloc_io_nowait(void *pool_ref);
 void ctl_free_io(union ctl_io *io);
 void ctl_zero_io(union ctl_io *io);
-void ctl_copy_io(union ctl_io *src, union ctl_io *dest);
 
 #endif /* _KERNEL */
 

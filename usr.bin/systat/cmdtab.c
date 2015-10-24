@@ -69,6 +69,9 @@ struct	cmdtab cmdtab[] = {
 	  initip6,	openip6,	closeip6,	cmdmode,
 	  resetip6,	CF_LOADAV },
 #endif
+	{ "sctp",	showsctp,	fetchsctp,	labelsctp,
+	  initsctp,	opensctp,	closesctp,	cmdmode,
+	  resetsctp,	CF_LOADAV },
 	{ "tcp",	showtcp,	fetchtcp,	labeltcp,
 	  inittcp,	opentcp,	closetcp,	cmdmode,
 	  resettcp,	CF_LOADAV },
@@ -78,6 +81,9 @@ struct	cmdtab cmdtab[] = {
 	{ "sensors",	showsensors,	fetchsensors,	labelsensors,
 	  initsensors,	opensensors,	closesensors,	0,
 	  0,		CF_LOADAV },
+	{ "zarc",	showzarc,	fetchzarc,	labelzarc,
+	  initzarc,	openzarc,	closezarc,	0,
+	  resetzarc,	CF_ZFSARC },
 	{ NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 0 }
 };
 struct  cmdtab *curcmd = &cmdtab[0];

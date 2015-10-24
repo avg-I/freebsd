@@ -112,12 +112,6 @@ OBJTOP:= ${OBJROOT}${TARGET_OBJ_SPEC}
 .endif
 .endif
 
-.if ${.CURDIR} == ${SRCTOP}
-RELDIR = .
-.elif ${.CURDIR:M${SRCTOP}/*}
-RELDIR := ${.CURDIR:S,${SRCTOP}/,,}
-.endif
-
 HOST_OBJTOP ?= ${OBJROOT}${HOST_TARGET}
 
 .if ${OBJTOP} == ${HOST_OBJTOP} || ${REQUESTED_MACHINE:U${MACHINE}} == "host"
@@ -165,7 +159,7 @@ STAGE_SYMLINKS_DIR= ${STAGE_OBJTOP}
 
 LDFLAGS_LAST+= -Wl,-rpath-link -Wl,${STAGE_LIBDIR}
 .if ${MK_SYSROOT} == "yes"
-SYSROOT?= ${STAGE_OBJTOP}/
+SYSROOT?= ${STAGE_OBJTOP}
 .else
 LDFLAGS_LAST+= -L${STAGE_LIBDIR}
 .endif
@@ -193,7 +187,9 @@ UPDATE_DEPENDFILE= NO
 .MAKE.META.BAILIWICK = ${SB} ${OBJROOT} ${STAGE_ROOT}
 
 .if defined(CCACHE_DIR)
+CCACHE_DIR := ${CCACHE_DIR:tA}
 .MAKE.META.IGNORE_PATHS += ${CCACHE_DIR}
+.export CCACHE_DIR
 .endif
 
 CSU_DIR.${MACHINE_ARCH} ?= csu/${MACHINE_ARCH}
@@ -212,14 +208,19 @@ TOOLSDIR?= ${HOST_OBJTOP}/tools
 .elif defined(STAGE_HOST_OBJTOP) && exists(${STAGE_HOST_OBJTOP}/usr/bin)
 TOOLSDIR?= ${STAGE_HOST_OBJTOP}
 .endif
+.if !empty(TOOLSDIR)
 .if ${.MAKE.LEVEL} == 0 && exists(${TOOLSDIR}/usr/bin)
 PATH:= ${PATH:S,:, ,g:@d@${exists(${TOOLSDIR}$d):?${TOOLSDIR}$d:}@:ts:}:${PATH}
 .export PATH
 .if exists(${TOOLSDIR}/usr/bin/cc)
-HOST_CC?= ${TOOLSDIR}/usr/bin/cc
-CC?= ${TOOLSDIR}/usr/bin/cc
-CXX?= ${TOOLSDIR}/usr/bin/c++
-.export HOST_CC CC CXX
+HOST_CC?=	${TOOLSDIR}/usr/bin/cc
+CC?=		${HOST_CC}
+HOST_CXX?=	${TOOLSDIR}/usr/bin/c++
+CXX?=		${HOST_CXX}
+HOST_CPP?=	${TOOLSDIR}/usr/bin/cpp
+CPP?=		${HOST_CPP}
+.export HOST_CC CC HOST_CXX CXX HOST_CPP CPP
+.endif
 .endif
 .endif
 

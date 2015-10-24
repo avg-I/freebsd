@@ -174,7 +174,6 @@ static void	cfiscsi_target_release(struct cfiscsi_target *ct);
 static void	cfiscsi_session_delete(struct cfiscsi_session *cs);
 
 static struct cfiscsi_softc cfiscsi_softc;
-extern struct ctl_softc *control_softc;
 
 static struct ctl_frontend cfiscsi_frontend =
 {
@@ -462,6 +461,7 @@ cfiscsi_decode_lun(uint64_t encoded)
 			break;
 		}
 		result = (lun[1] << 16) + (lun[2] << 8) + lun[3];
+		break;
 	default:
 		CFISCSI_WARN("unsupported LUN format 0x%jx",
 		    (uintmax_t)encoded);
@@ -1378,10 +1378,8 @@ int
 cfiscsi_init(void)
 {
 	struct cfiscsi_softc *softc;
-	int retval;
 
 	softc = &cfiscsi_softc;
-	retval = 0;
 	bzero(softc, sizeof(*softc));
 	mtx_init(&softc->lock, "cfiscsi", NULL, MTX_DEF);
 
@@ -1611,6 +1609,16 @@ restart:
 			if (cs2 != cs && cs2->cs_tasks_aborted == false &&
 			    cs->cs_target == cs2->cs_target &&
 			    strcmp(cs->cs_initiator_id, cs2->cs_initiator_id) == 0) {
+				if (strcmp(cs->cs_initiator_addr,
+				    cs2->cs_initiator_addr) != 0) {
+					CFISCSI_SESSION_WARN(cs2,
+					    "session reinstatement from "
+					    "different address %s",
+					    cs->cs_initiator_addr);
+				} else {
+					CFISCSI_SESSION_DEBUG(cs2,
+					    "session reinstatement");
+				}
 				cfiscsi_session_terminate(cs2);
 				mtx_unlock(&softc->lock);
 				pause("cfiscsi_reinstate", 1);

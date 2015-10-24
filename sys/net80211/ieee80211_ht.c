@@ -1081,7 +1081,7 @@ ieee80211_ht_node_init(struct ieee80211_node *ni)
 		tap = &ni->ni_tx_ampdu[tid];
 		tap->txa_tid = tid;
 		tap->txa_ni = ni;
-		tap->txa_lastsample = ticks;
+		ieee80211_txampdu_init_pps(tap);
 		/* NB: further initialization deferred */
 	}
 	ni->ni_flags |= IEEE80211_NODE_HT | IEEE80211_NODE_AMPDU;
@@ -1251,7 +1251,7 @@ ieee80211_ht_wds_init(struct ieee80211_node *ni)
 	for (tid = 0; tid < WME_NUM_TID; tid++) {
 		tap = &ni->ni_tx_ampdu[tid];
 		tap->txa_tid = tid;
-		tap->txa_lastsample = ticks;
+		ieee80211_txampdu_init_pps(tap);
 	}
 	/* NB: AMPDU tx/rx governed by IEEE80211_FHT_AMPDU_{TX,RX} */
 	ni->ni_flags |= IEEE80211_NODE_HT | IEEE80211_NODE_AMPDU;
@@ -1414,12 +1414,6 @@ ieee80211_ht_timeout(struct ieee80211com *ic)
 		htinfo_update(ic);
 	}
 }
-
-/* unalligned little endian access */     
-#define LE_READ_2(p)					\
-	((uint16_t)					\
-	 ((((const uint8_t *)(p))[0]      ) |		\
-	  (((const uint8_t *)(p))[1] <<  8)))
 
 /*
  * Process an 802.11n HT capabilities ie.
@@ -1758,8 +1752,7 @@ ampdu_tx_stop(struct ieee80211_tx_ampdu *tap)
 	/*
 	 * Reset packet estimate.
 	 */
-	tap->txa_lastsample = ticks;
-	tap->txa_avgpps = 0;
+	ieee80211_txampdu_init_pps(tap);
 
 	/* NB: clearing NAK means we may re-send ADDBA */ 
 	tap->txa_flags &= ~(IEEE80211_AGGR_SETUP | IEEE80211_AGGR_NAK);
@@ -1830,6 +1823,55 @@ ieee80211_addba_request(struct ieee80211_node *ni,
 	    IEEE80211_AGGR_BAWMAX : min(bufsiz, IEEE80211_AGGR_BAWMAX);
 	addba_start_timeout(tap);
 	return 1;
+}
+
+/*
+ * Called by drivers that wish to request an ADDBA session be
+ * setup.  This brings it up and starts the request timer.
+ */
+int
+ieee80211_ampdu_tx_request_ext(struct ieee80211_node *ni, int tid)
+{
+	struct ieee80211_tx_ampdu *tap;
+
+	if (tid < 0 || tid > 15)
+		return (0);
+	tap = &ni->ni_tx_ampdu[tid];
+
+	/* XXX locking */
+	if ((tap->txa_flags & IEEE80211_AGGR_SETUP) == 0) {
+		/* do deferred setup of state */
+		ampdu_tx_setup(tap);
+	}
+	/* XXX hack for not doing proper locking */
+	tap->txa_flags &= ~IEEE80211_AGGR_NAK;
+	addba_start_timeout(tap);
+	return (1);
+}
+
+/*
+ * Called by drivers that have marked a session as active.
+ */
+int
+ieee80211_ampdu_tx_request_active_ext(struct ieee80211_node *ni, int tid,
+    int status)
+{
+	struct ieee80211_tx_ampdu *tap;
+
+	if (tid < 0 || tid > 15)
+		return (0);
+	tap = &ni->ni_tx_ampdu[tid];
+
+	/* XXX locking */
+	addba_stop_timeout(tap);
+	if (status == 1) {
+		tap->txa_flags |= IEEE80211_AGGR_RUNNING;
+		tap->txa_attempts = 0;
+	} else {
+		/* mark tid so we don't try again */
+		tap->txa_flags |= IEEE80211_AGGR_NAK;
+	}
+	return (1);
 }
 
 /*

@@ -123,10 +123,11 @@ typedef enum {
 	CTL_UA_INQ_CHANGE	= 0x0100,
 	CTL_UA_RES_PREEMPT	= 0x0400,
 	CTL_UA_RES_RELEASE	= 0x0800,
-	CTL_UA_REG_PREEMPT  	= 0x1000,
-	CTL_UA_ASYM_ACC_CHANGE  = 0x2000,
-	CTL_UA_CAPACITY_CHANGED = 0x4000,
-	CTL_UA_THIN_PROV_THRES	= 0x8000
+	CTL_UA_REG_PREEMPT	= 0x1000,
+	CTL_UA_ASYM_ACC_CHANGE	= 0x2000,
+	CTL_UA_CAPACITY_CHANGE	= 0x4000,
+	CTL_UA_THIN_PROV_THRES	= 0x8000,
+	CTL_UA_MEDIUM_CHANGE	= 0x10000
 } ctl_ua_type;
 
 #ifdef	_KERNEL
@@ -193,6 +194,8 @@ void ctl_clr_ua_allluns(struct ctl_softc *ctl_softc, uint32_t initidx,
 void ctl_isc_announce_lun(struct ctl_lun *lun);
 void ctl_isc_announce_port(struct ctl_port *port);
 void ctl_isc_announce_iid(struct ctl_port *port, int iid);
+void ctl_isc_announce_mode(struct ctl_lun *lun, uint32_t initidx,
+    uint8_t page, uint8_t subpage);
 
 /*
  * KPI to manipulate LUN/port options
