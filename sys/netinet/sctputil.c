@@ -58,8 +58,8 @@ __FBSDID("$FreeBSD$");
 #define KTR_SCTP KTR_SUBSYS
 #endif
 
-extern struct sctp_cc_functions sctp_cc_functions[];
-extern struct sctp_ss_functions sctp_ss_functions[];
+extern const struct sctp_cc_functions sctp_cc_functions[];
+extern const struct sctp_ss_functions sctp_ss_functions[];
 
 void
 sctp_sblog(struct sockbuf *sb, struct sctp_tcb *stcb, int from, int incr)
@@ -503,7 +503,7 @@ sctp_wakeup_log(struct sctp_tcb *stcb, uint32_t wake_cnt, int from)
 }
 
 void
-sctp_log_block(uint8_t from, struct sctp_association *asoc, int sendlen)
+sctp_log_block(uint8_t from, struct sctp_association *asoc, size_t sendlen)
 {
 	struct sctp_cwnd_log sctp_clog;
 
@@ -513,7 +513,7 @@ sctp_log_block(uint8_t from, struct sctp_association *asoc, int sendlen)
 	sctp_clog.x.blk.stream_qcnt = (uint16_t) asoc->stream_queue_cnt;
 	sctp_clog.x.blk.chunks_on_oque = (uint16_t) asoc->chunks_on_out_queue;
 	sctp_clog.x.blk.flight_size = (uint16_t) (asoc->total_flight / 1024);
-	sctp_clog.x.blk.sndlen = sendlen;
+	sctp_clog.x.blk.sndlen = (uint32_t) sendlen;
 	SCTP_CTR6(KTR_SCTP, "SCTP:%d[%d]:%x-%x-%x-%x",
 	    SCTP_LOG_EVENT_BLOCK,
 	    from,
@@ -938,7 +938,7 @@ sctp_map_assoc_state(int kernel_state)
 
 int
 sctp_init_asoc(struct sctp_inpcb *inp, struct sctp_tcb *stcb,
-    uint32_t override_tag, uint32_t vrf_id)
+    uint32_t override_tag, uint32_t vrf_id, uint16_t o_strms)
 {
 	struct sctp_association *asoc;
 
@@ -1100,7 +1100,7 @@ sctp_init_asoc(struct sctp_inpcb *inp, struct sctp_tcb *stcb,
 	 * that we request by default.
 	 */
 	asoc->strm_realoutsize = asoc->streamoutcnt = asoc->pre_open_streams =
-	    inp->sctp_ep.pre_open_stream_count;
+	    o_strms;
 	SCTP_MALLOC(asoc->strmout, struct sctp_stream_out *,
 	    asoc->streamoutcnt * sizeof(struct sctp_stream_out),
 	    SCTP_M_STRMO);
@@ -1470,7 +1470,9 @@ sctp_handle_addr_wq(void)
 	if (asc->cnt == 0) {
 		SCTP_FREE(asc, SCTP_M_ASC_IT);
 	} else {
-		(void)sctp_initiate_iterator(sctp_asconf_iterator_ep,
+		int ret;
+
+		ret = sctp_initiate_iterator(sctp_asconf_iterator_ep,
 		    sctp_asconf_iterator_stcb,
 		    NULL,	/* No ep end for boundall */
 		    SCTP_PCB_FLAGS_BOUNDALL,
@@ -1478,6 +1480,23 @@ sctp_handle_addr_wq(void)
 		    SCTP_ASOC_ANY_STATE,
 		    (void *)asc, 0,
 		    sctp_asconf_iterator_end, NULL, 0);
+		if (ret) {
+			SCTP_PRINTF("Failed to initiate iterator for handle_addr_wq\n");
+			/*
+			 * Freeing if we are stopping or put back on the
+			 * addr_wq.
+			 */
+			if (SCTP_BASE_VAR(sctp_pcb_initialized) == 0) {
+				sctp_asconf_iterator_end(asc, 0);
+			} else {
+				SCTP_WQ_ADDR_LOCK();
+				LIST_FOREACH(wi, &asc->list_of_work, sctp_nxt_addr) {
+					LIST_INSERT_HEAD(&SCTP_BASE_INFO(addr_wq), wi, sctp_nxt_addr);
+				}
+				SCTP_WQ_ADDR_UNLOCK();
+				SCTP_FREE(asc, SCTP_M_ASC_IT);
+			}
+		}
 	}
 }
 
@@ -1495,6 +1514,7 @@ sctp_timeout_handler(void *t)
 
 #endif
 	int did_output;
+	int type;
 
 	tmr = (struct sctp_timer *)t;
 	inp = (struct sctp_inpcb *)tmr->ep;
@@ -1563,8 +1583,9 @@ sctp_timeout_handler(void *t)
 			return;
 		}
 	}
+	type = tmr->type;
 	tmr->stopped_from = 0xa005;
-	SCTPDBG(SCTP_DEBUG_TIMER1, "Timer type %d goes off\n", tmr->type);
+	SCTPDBG(SCTP_DEBUG_TIMER1, "Timer type %d goes off\n", type);
 	if (!SCTP_OS_TIMER_ACTIVE(&tmr->timer)) {
 		if (inp) {
 			SCTP_INP_DECR_REF(inp);
@@ -1580,7 +1601,7 @@ sctp_timeout_handler(void *t)
 	if (stcb) {
 		SCTP_TCB_LOCK(stcb);
 		atomic_add_int(&stcb->asoc.refcnt, -1);
-		if ((tmr->type != SCTP_TIMER_TYPE_ASOCKILL) &&
+		if ((type != SCTP_TIMER_TYPE_ASOCKILL) &&
 		    ((stcb->asoc.state == 0) ||
 		    (stcb->asoc.state & SCTP_STATE_ABOUT_TO_BE_FREED))) {
 			SCTP_TCB_UNLOCK(stcb);
@@ -1592,7 +1613,7 @@ sctp_timeout_handler(void *t)
 		}
 	}
 	/* record in stopped what t-o occured */
-	tmr->stopped_from = tmr->type;
+	tmr->stopped_from = type;
 
 	/* mark as being serviced now */
 	if (SCTP_OS_TIMER_PENDING(&tmr->timer)) {
@@ -1610,7 +1631,7 @@ sctp_timeout_handler(void *t)
 	SCTP_OS_TIMER_DEACTIVATE(&tmr->timer);
 
 	/* call the handler for the appropriate timer type */
-	switch (tmr->type) {
+	switch (type) {
 	case SCTP_TIMER_TYPE_ZERO_COPY:
 		if (inp == NULL) {
 			break;
@@ -1894,11 +1915,11 @@ sctp_timeout_handler(void *t)
 		goto out_no_decr;
 	default:
 		SCTPDBG(SCTP_DEBUG_TIMER1, "sctp_timeout_handler:unknown timer %d\n",
-		    tmr->type);
+		    type);
 		break;
 	}
 #ifdef SCTP_AUDITING_ENABLED
-	sctp_audit_log(0xF1, (uint8_t) tmr->type);
+	sctp_audit_log(0xF1, (uint8_t) type);
 	if (inp)
 		sctp_auditing(5, inp, stcb, net);
 #endif
@@ -1921,8 +1942,7 @@ out_decr:
 		SCTP_INP_DECR_REF(inp);
 	}
 out_no_decr:
-	SCTPDBG(SCTP_DEBUG_TIMER1, "Timer now complete (type %d)\n",
-	    tmr->type);
+	SCTPDBG(SCTP_DEBUG_TIMER1, "Timer now complete (type = %d)\n", type);
 	CURVNET_RESTORE();
 }
 
@@ -2659,7 +2679,8 @@ sctp_notify_assoc_change(uint16_t state, struct sctp_tcb *stcb,
 	struct mbuf *m_notify;
 	struct sctp_assoc_change *sac;
 	struct sctp_queued_to_read *control;
-	size_t notif_len, abort_len;
+	unsigned int notif_len;
+	uint16_t abort_len;
 	unsigned int i;
 
 #if defined(__APPLE__) || defined(SCTP_SO_LOCK_TESTING)
@@ -2671,7 +2692,7 @@ sctp_notify_assoc_change(uint16_t state, struct sctp_tcb *stcb,
 		return;
 	}
 	if (sctp_stcb_is_feature_on(stcb->sctp_ep, stcb, SCTP_PCB_FLAGS_RECVASSOCEVNT)) {
-		notif_len = sizeof(struct sctp_assoc_change);
+		notif_len = (unsigned int)sizeof(struct sctp_assoc_change);
 		if (abort != NULL) {
 			abort_len = ntohs(abort->ch.chunk_length);
 		} else {
@@ -2685,7 +2706,7 @@ sctp_notify_assoc_change(uint16_t state, struct sctp_tcb *stcb,
 		m_notify = sctp_get_mbuf_for_msg(notif_len, 0, M_NOWAIT, 1, MT_DATA);
 		if (m_notify == NULL) {
 			/* Retry with smaller value. */
-			notif_len = sizeof(struct sctp_assoc_change);
+			notif_len = (unsigned int)sizeof(struct sctp_assoc_change);
 			m_notify = sctp_get_mbuf_for_msg(notif_len, 0, M_NOWAIT, 1, MT_DATA);
 			if (m_notify == NULL) {
 				goto set_error;
@@ -3550,7 +3571,8 @@ sctp_notify_remote_error(struct sctp_tcb *stcb, uint16_t error, struct sctp_erro
 	struct mbuf *m_notify;
 	struct sctp_remote_error *sre;
 	struct sctp_queued_to_read *control;
-	size_t notif_len, chunk_len;
+	unsigned int notif_len;
+	uint16_t chunk_len;
 
 	if ((stcb == NULL) ||
 	    sctp_stcb_is_feature_off(stcb->sctp_ep, stcb, SCTP_PCB_FLAGS_RECVPEERERR)) {
@@ -3561,11 +3583,11 @@ sctp_notify_remote_error(struct sctp_tcb *stcb, uint16_t error, struct sctp_erro
 	} else {
 		chunk_len = 0;
 	}
-	notif_len = sizeof(struct sctp_remote_error) + chunk_len;
+	notif_len = (unsigned int)(sizeof(struct sctp_remote_error) + chunk_len);
 	m_notify = sctp_get_mbuf_for_msg(notif_len, 0, M_NOWAIT, 1, MT_DATA);
 	if (m_notify == NULL) {
 		/* Retry with smaller value. */
-		notif_len = sizeof(struct sctp_remote_error);
+		notif_len = (unsigned int)sizeof(struct sctp_remote_error);
 		m_notify = sctp_get_mbuf_for_msg(notif_len, 0, M_NOWAIT, 1, MT_DATA);
 		if (m_notify == NULL) {
 			return;
@@ -4719,19 +4741,23 @@ sctp_generate_cause(uint16_t code, char *info)
 {
 	struct mbuf *m;
 	struct sctp_gen_error_cause *cause;
-	size_t info_len, len;
+	size_t info_len;
+	uint16_t len;
 
 	if ((code == 0) || (info == NULL)) {
 		return (NULL);
 	}
 	info_len = strlen(info);
-	len = sizeof(struct sctp_paramhdr) + info_len;
+	if (info_len > (SCTP_MAX_CAUSE_LENGTH - sizeof(struct sctp_paramhdr))) {
+		return (NULL);
+	}
+	len = (uint16_t) (sizeof(struct sctp_paramhdr) + info_len);
 	m = sctp_get_mbuf_for_msg(len, 0, M_NOWAIT, 1, MT_DATA);
 	if (m != NULL) {
 		SCTP_BUF_LEN(m) = len;
 		cause = mtod(m, struct sctp_gen_error_cause *);
 		cause->code = htons(code);
-		cause->length = htons((uint16_t) len);
+		cause->length = htons(len);
 		memcpy(cause->info, info, info_len);
 	}
 	return (m);
@@ -4742,15 +4768,15 @@ sctp_generate_no_user_data_cause(uint32_t tsn)
 {
 	struct mbuf *m;
 	struct sctp_error_no_user_data *no_user_data_cause;
-	size_t len;
+	uint16_t len;
 
-	len = sizeof(struct sctp_error_no_user_data);
+	len = (uint16_t) sizeof(struct sctp_error_no_user_data);
 	m = sctp_get_mbuf_for_msg(len, 0, M_NOWAIT, 1, MT_DATA);
 	if (m != NULL) {
 		SCTP_BUF_LEN(m) = len;
 		no_user_data_cause = mtod(m, struct sctp_error_no_user_data *);
 		no_user_data_cause->cause.code = htons(SCTP_CAUSE_NO_USER_DATA);
-		no_user_data_cause->cause.length = htons((uint16_t) len);
+		no_user_data_cause->cause.length = htons(len);
 		no_user_data_cause->tsn = tsn;	/* tsn is passed in as NBO */
 	}
 	return (m);
@@ -5275,7 +5301,7 @@ sctp_sorecvmsg(struct socket *so,
 	uint32_t rwnd_req = 0;
 	int hold_sblock = 0;
 	int hold_rlock = 0;
-	int slen = 0;
+	ssize_t slen = 0;
 	uint32_t held_length = 0;
 	int sockbuf_lock = 0;
 
@@ -5320,11 +5346,11 @@ sctp_sorecvmsg(struct socket *so,
 	in_eeor_mode = sctp_is_feature_on(inp, SCTP_PCB_FLAGS_EXPLICIT_EOR);
 	if (SCTP_BASE_SYSCTL(sctp_logging_level) & SCTP_RECV_RWND_LOGGING_ENABLE) {
 		sctp_misc_ints(SCTP_SORECV_ENTER,
-		    rwnd_req, in_eeor_mode, so->so_rcv.sb_cc, uio->uio_resid);
+		    rwnd_req, in_eeor_mode, so->so_rcv.sb_cc, (uint32_t) uio->uio_resid);
 	}
 	if (SCTP_BASE_SYSCTL(sctp_logging_level) & SCTP_RECV_RWND_LOGGING_ENABLE) {
 		sctp_misc_ints(SCTP_SORECV_ENTERPL,
-		    rwnd_req, block_allowed, so->so_rcv.sb_cc, uio->uio_resid);
+		    rwnd_req, block_allowed, so->so_rcv.sb_cc, (uint32_t) uio->uio_resid);
 	}
 	error = sblock(&so->so_rcv, (block_allowed ? SBL_WAIT : 0));
 	if (error) {
@@ -5654,20 +5680,20 @@ found_one:
 			s_extra = (struct sctp_extrcvinfo *)sinfo;
 			if ((nxt) &&
 			    (nxt->length)) {
-				s_extra->sreinfo_next_flags = SCTP_NEXT_MSG_AVAIL;
+				s_extra->serinfo_next_flags = SCTP_NEXT_MSG_AVAIL;
 				if (nxt->sinfo_flags & SCTP_UNORDERED) {
-					s_extra->sreinfo_next_flags |= SCTP_NEXT_MSG_IS_UNORDERED;
+					s_extra->serinfo_next_flags |= SCTP_NEXT_MSG_IS_UNORDERED;
 				}
 				if (nxt->spec_flags & M_NOTIFICATION) {
-					s_extra->sreinfo_next_flags |= SCTP_NEXT_MSG_IS_NOTIFICATION;
+					s_extra->serinfo_next_flags |= SCTP_NEXT_MSG_IS_NOTIFICATION;
 				}
-				s_extra->sreinfo_next_aid = nxt->sinfo_assoc_id;
-				s_extra->sreinfo_next_length = nxt->length;
-				s_extra->sreinfo_next_ppid = nxt->sinfo_ppid;
-				s_extra->sreinfo_next_stream = nxt->sinfo_stream;
+				s_extra->serinfo_next_aid = nxt->sinfo_assoc_id;
+				s_extra->serinfo_next_length = nxt->length;
+				s_extra->serinfo_next_ppid = nxt->sinfo_ppid;
+				s_extra->serinfo_next_stream = nxt->sinfo_stream;
 				if (nxt->tail_mbuf != NULL) {
 					if (nxt->end_added) {
-						s_extra->sreinfo_next_flags |= SCTP_NEXT_MSG_ISCOMPLETE;
+						s_extra->serinfo_next_flags |= SCTP_NEXT_MSG_ISCOMPLETE;
 					}
 				}
 			} else {
@@ -5678,11 +5704,11 @@ found_one:
 				 * :-D
 				 */
 				nxt = NULL;
-				s_extra->sreinfo_next_flags = SCTP_NO_NEXT_MSG;
-				s_extra->sreinfo_next_aid = 0;
-				s_extra->sreinfo_next_length = 0;
-				s_extra->sreinfo_next_ppid = 0;
-				s_extra->sreinfo_next_stream = 0;
+				s_extra->serinfo_next_flags = SCTP_NO_NEXT_MSG;
+				s_extra->serinfo_next_aid = 0;
+				s_extra->serinfo_next_length = 0;
+				s_extra->serinfo_next_ppid = 0;
+				s_extra->serinfo_next_stream = 0;
 			}
 		}
 		/*
@@ -6165,7 +6191,7 @@ out:
 		struct sctp_extrcvinfo *s_extra;
 
 		s_extra = (struct sctp_extrcvinfo *)sinfo;
-		s_extra->sreinfo_next_flags = SCTP_NO_NEXT_MSG;
+		s_extra->serinfo_next_flags = SCTP_NO_NEXT_MSG;
 	}
 	if (hold_rlock == 1) {
 		SCTP_INP_READ_UNLOCK(inp);
@@ -6199,13 +6225,13 @@ out:
 		if (stcb) {
 			sctp_misc_ints(SCTP_SORECV_DONE,
 			    freed_so_far,
-			    ((uio) ? (slen - uio->uio_resid) : slen),
+			    (uint32_t) ((uio) ? (slen - uio->uio_resid) : slen),
 			    stcb->asoc.my_rwnd,
 			    so->so_rcv.sb_cc);
 		} else {
 			sctp_misc_ints(SCTP_SORECV_DONE,
 			    freed_so_far,
-			    ((uio) ? (slen - uio->uio_resid) : slen),
+			    (uint32_t) ((uio) ? (slen - uio->uio_resid) : slen),
 			    0,
 			    so->so_rcv.sb_cc);
 		}
@@ -6432,30 +6458,30 @@ out_now:
 
 struct sctp_tcb *
 sctp_connectx_helper_find(struct sctp_inpcb *inp, struct sockaddr *addr,
-    int *totaddr, int *num_v4, int *num_v6, int *error,
-    int limit, int *bad_addr)
+    unsigned int *totaddr,
+    unsigned int *num_v4, unsigned int *num_v6, int *error,
+    unsigned int limit, int *bad_addr)
 {
 	struct sockaddr *sa;
 	struct sctp_tcb *stcb = NULL;
-	size_t incr, at, i;
+	unsigned int incr, at, i;
 
 	at = incr = 0;
 	sa = addr;
-
 	*error = *num_v6 = *num_v4 = 0;
 	/* account and validate addresses */
-	for (i = 0; i < (size_t)*totaddr; i++) {
+	for (i = 0; i < *totaddr; i++) {
 		switch (sa->sa_family) {
 #ifdef INET
 		case AF_INET:
-			(*num_v4) += 1;
-			incr = sizeof(struct sockaddr_in);
 			if (sa->sa_len != incr) {
 				SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTPUTIL, EINVAL);
 				*error = EINVAL;
 				*bad_addr = 1;
 				return (NULL);
 			}
+			(*num_v4) += 1;
+			incr = (unsigned int)sizeof(struct sockaddr_in);
 			break;
 #endif
 #ifdef INET6
@@ -6471,14 +6497,14 @@ sctp_connectx_helper_find(struct sctp_inpcb *inp, struct sockaddr *addr,
 					*bad_addr = 1;
 					return (NULL);
 				}
-				(*num_v6) += 1;
-				incr = sizeof(struct sockaddr_in6);
 				if (sa->sa_len != incr) {
 					SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTPUTIL, EINVAL);
 					*error = EINVAL;
 					*bad_addr = 1;
 					return (NULL);
 				}
+				(*num_v6) += 1;
+				incr = (unsigned int)sizeof(struct sockaddr_in6);
 				break;
 			}
 #endif
@@ -6487,7 +6513,7 @@ sctp_connectx_helper_find(struct sctp_inpcb *inp, struct sockaddr *addr,
 			/* we are done */
 			break;
 		}
-		if (i == (size_t)*totaddr) {
+		if (i == *totaddr) {
 			break;
 		}
 		SCTP_INP_INCR_REF(inp);
@@ -6498,7 +6524,7 @@ sctp_connectx_helper_find(struct sctp_inpcb *inp, struct sockaddr *addr,
 		} else {
 			SCTP_INP_DECR_REF(inp);
 		}
-		if ((at + incr) > (size_t)limit) {
+		if ((at + incr) > limit) {
 			*totaddr = i;
 			break;
 		}
@@ -6957,6 +6983,18 @@ sctp_recv_udp_tunneled_packet(struct mbuf *m, int off, struct inpcb *inp,
 	for (last = m; last->m_next; last = last->m_next);
 	last->m_next = sp;
 	m->m_pkthdr.len += sp->m_pkthdr.len;
+	/*
+	 * The CSUM_DATA_VALID flags indicates that the HW checked the UDP
+	 * checksum and it was valid. Since CSUM_DATA_VALID ==
+	 * CSUM_SCTP_VALID this would imply that the HW also verified the
+	 * SCTP checksum. Therefore, clear the bit.
+	 */
+	SCTPDBG(SCTP_DEBUG_CRCOFFLOAD,
+	    "sctp_recv_udp_tunneled_packet(): Packet of length %d received on %s with csum_flags 0x%b.\n",
+	    m->m_pkthdr.len,
+	    if_name(m->m_pkthdr.rcvif),
+	    (int)m->m_pkthdr.csum_flags, CSUM_BITS);
+	m->m_pkthdr.csum_flags &= ~CSUM_DATA_VALID;
 	iph = mtod(m, struct ip *);
 	switch (iph->ip_v) {
 #ifdef INET

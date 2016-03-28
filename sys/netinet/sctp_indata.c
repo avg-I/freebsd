@@ -223,9 +223,9 @@ sctp_build_ctl_nchunk(struct sctp_inpcb *inp, struct sctp_sndrcvinfo *sinfo)
 	}
 	seinfo = (struct sctp_extrcvinfo *)sinfo;
 	if (sctp_is_feature_on(inp, SCTP_PCB_FLAGS_RECVNXTINFO) &&
-	    (seinfo->sreinfo_next_flags & SCTP_NEXT_MSG_AVAIL)) {
+	    (seinfo->serinfo_next_flags & SCTP_NEXT_MSG_AVAIL)) {
 		provide_nxt = 1;
-		len += CMSG_SPACE(sizeof(struct sctp_rcvinfo));
+		len += CMSG_SPACE(sizeof(struct sctp_nxtinfo));
 	} else {
 		provide_nxt = 0;
 	}
@@ -276,20 +276,20 @@ sctp_build_ctl_nchunk(struct sctp_inpcb *inp, struct sctp_sndrcvinfo *sinfo)
 		cmh->cmsg_len = CMSG_LEN(sizeof(struct sctp_nxtinfo));
 		cmh->cmsg_type = SCTP_NXTINFO;
 		nxtinfo = (struct sctp_nxtinfo *)CMSG_DATA(cmh);
-		nxtinfo->nxt_sid = seinfo->sreinfo_next_stream;
+		nxtinfo->nxt_sid = seinfo->serinfo_next_stream;
 		nxtinfo->nxt_flags = 0;
-		if (seinfo->sreinfo_next_flags & SCTP_NEXT_MSG_IS_UNORDERED) {
+		if (seinfo->serinfo_next_flags & SCTP_NEXT_MSG_IS_UNORDERED) {
 			nxtinfo->nxt_flags |= SCTP_UNORDERED;
 		}
-		if (seinfo->sreinfo_next_flags & SCTP_NEXT_MSG_IS_NOTIFICATION) {
+		if (seinfo->serinfo_next_flags & SCTP_NEXT_MSG_IS_NOTIFICATION) {
 			nxtinfo->nxt_flags |= SCTP_NOTIFICATION;
 		}
-		if (seinfo->sreinfo_next_flags & SCTP_NEXT_MSG_ISCOMPLETE) {
+		if (seinfo->serinfo_next_flags & SCTP_NEXT_MSG_ISCOMPLETE) {
 			nxtinfo->nxt_flags |= SCTP_COMPLETE;
 		}
-		nxtinfo->nxt_ppid = seinfo->sreinfo_next_ppid;
-		nxtinfo->nxt_length = seinfo->sreinfo_next_length;
-		nxtinfo->nxt_assoc_id = seinfo->sreinfo_next_aid;
+		nxtinfo->nxt_ppid = seinfo->serinfo_next_ppid;
+		nxtinfo->nxt_length = seinfo->serinfo_next_length;
+		nxtinfo->nxt_assoc_id = seinfo->serinfo_next_aid;
 		cmh = (struct cmsghdr *)((caddr_t)cmh + CMSG_SPACE(sizeof(struct sctp_nxtinfo)));
 		SCTP_BUF_LEN(ret) += CMSG_SPACE(sizeof(struct sctp_nxtinfo));
 	}
@@ -1948,7 +1948,7 @@ finish_express_del:
 	return (1);
 }
 
-int8_t sctp_map_lookup_tab[256] = {
+static const int8_t sctp_map_lookup_tab[256] = {
 	0, 1, 0, 2, 0, 1, 0, 3,
 	0, 1, 0, 2, 0, 1, 0, 4,
 	0, 1, 0, 2, 0, 1, 0, 3,
@@ -2495,7 +2495,7 @@ sctp_process_data(struct mbuf **mm, int iphlen, int *offset, int length,
 					if (op_err != NULL) {
 						cause = mtod(op_err, struct sctp_gen_error_cause *);
 						cause->code = htons(SCTP_CAUSE_UNRECOG_CHUNK);
-						cause->length = htons(chk_length + sizeof(struct sctp_gen_error_cause));
+						cause->length = htons((uint16_t) (chk_length + sizeof(struct sctp_gen_error_cause)));
 						SCTP_BUF_LEN(op_err) = sizeof(struct sctp_gen_error_cause);
 						SCTP_BUF_NEXT(op_err) = SCTP_M_COPYM(m, *offset, chk_length, M_NOWAIT);
 						if (SCTP_BUF_NEXT(op_err) != NULL) {
@@ -2688,7 +2688,7 @@ sctp_process_segment_range(struct sctp_tcb *stcb, struct sctp_tmit_chunk **p_tp1
 							sctp_misc_ints(SCTP_FLIGHT_LOG_DOWN_GAP,
 							    tp1->whoTo->flight_size,
 							    tp1->book_size,
-							    (uintptr_t) tp1->whoTo,
+							    (uint32_t) (uintptr_t) tp1->whoTo,
 							    tp1->rec.data.TSN_seq);
 						}
 						sctp_flight_size_decrease(tp1);
@@ -2762,6 +2762,11 @@ sctp_process_segment_range(struct sctp_tcb *stcb, struct sctp_tmit_chunk **p_tp1
 						} else {
 							panic("No chunks on the queues for sid %u.", tp1->rec.data.stream_number);
 #endif
+						}
+						if ((stcb->asoc.strmout[tp1->rec.data.stream_number].chunks_on_queues == 0) &&
+						    (stcb->asoc.strmout[tp1->rec.data.stream_number].state == SCTP_STREAM_RESET_PENDING) &&
+						    TAILQ_EMPTY(&stcb->asoc.strmout[tp1->rec.data.stream_number].outqueue)) {
+							stcb->asoc.trigger_reset = 1;
 						}
 						tp1->sent = SCTP_DATAGRAM_NR_ACKED;
 						if (tp1->data) {
@@ -2892,7 +2897,7 @@ sctp_check_for_revoked(struct sctp_tcb *stcb,
 					sctp_misc_ints(SCTP_FLIGHT_LOG_UP_REVOKE,
 					    tp1->whoTo->flight_size,
 					    tp1->book_size,
-					    (uintptr_t) tp1->whoTo,
+					    (uint32_t) (uintptr_t) tp1->whoTo,
 					    tp1->rec.data.TSN_seq);
 				}
 				sctp_flight_size_increase(tp1);
@@ -3206,7 +3211,7 @@ sctp_strike_gap_ack_chunks(struct sctp_tcb *stcb, struct sctp_association *asoc,
 				sctp_misc_ints(SCTP_FLIGHT_LOG_DOWN_RSND,
 				    (tp1->whoTo ? (tp1->whoTo->flight_size) : 0),
 				    tp1->book_size,
-				    (uintptr_t) tp1->whoTo,
+				    (uint32_t) (uintptr_t) tp1->whoTo,
 				    tp1->rec.data.TSN_seq);
 			}
 			if (tp1->whoTo) {
@@ -3518,7 +3523,7 @@ sctp_window_probe_recovery(struct sctp_tcb *stcb,
 		sctp_misc_ints(SCTP_FLIGHT_LOG_DWN_WP_FWD,
 		    tp1->whoTo ? tp1->whoTo->flight_size : 0,
 		    tp1->book_size,
-		    (uintptr_t) tp1->whoTo,
+		    (uint32_t) (uintptr_t) tp1->whoTo,
 		    tp1->rec.data.TSN_seq);
 		return;
 	}
@@ -3537,7 +3542,7 @@ sctp_window_probe_recovery(struct sctp_tcb *stcb,
 		sctp_misc_ints(SCTP_FLIGHT_LOG_DOWN_WP,
 		    tp1->whoTo->flight_size,
 		    tp1->book_size,
-		    (uintptr_t) tp1->whoTo,
+		    (uint32_t) (uintptr_t) tp1->whoTo,
 		    tp1->rec.data.TSN_seq);
 	}
 }
@@ -3656,7 +3661,7 @@ sctp_express_handle_sack(struct sctp_tcb *stcb, uint32_t cumack,
 							sctp_misc_ints(SCTP_FLIGHT_LOG_DOWN_CA,
 							    tp1->whoTo->flight_size,
 							    tp1->book_size,
-							    (uintptr_t) tp1->whoTo,
+							    (uint32_t) (uintptr_t) tp1->whoTo,
 							    tp1->rec.data.TSN_seq);
 						}
 						sctp_flight_size_decrease(tp1);
@@ -3735,6 +3740,11 @@ sctp_express_handle_sack(struct sctp_tcb *stcb, uint32_t cumack,
 						panic("No chunks on the queues for sid %u.", tp1->rec.data.stream_number);
 #endif
 					}
+				}
+				if ((asoc->strmout[tp1->rec.data.stream_number].chunks_on_queues == 0) &&
+				    (asoc->strmout[tp1->rec.data.stream_number].state == SCTP_STREAM_RESET_PENDING) &&
+				    TAILQ_EMPTY(&asoc->strmout[tp1->rec.data.stream_number].outqueue)) {
+					asoc->trigger_reset = 1;
 				}
 				TAILQ_REMOVE(&asoc->sent_queue, tp1, sctp_next);
 				if (tp1->data) {
@@ -3984,6 +3994,7 @@ again:
 				op_err = sctp_generate_cause(SCTP_CAUSE_USER_INITIATED_ABT, "");
 				stcb->sctp_ep->last_abort_code = SCTP_FROM_SCTP_INDATA + SCTP_LOC_26;
 				sctp_abort_an_association(stcb->sctp_ep, stcb, op_err, SCTP_SO_NOT_LOCKED);
+				return;
 			} else {
 				struct sctp_nets *netp;
 
@@ -4291,7 +4302,7 @@ sctp_handle_sack(struct mbuf *m, int offset_seg, int offset_dup,
 							sctp_misc_ints(SCTP_FLIGHT_LOG_DOWN_CA,
 							    tp1->whoTo->flight_size,
 							    tp1->book_size,
-							    (uintptr_t) tp1->whoTo,
+							    (uint32_t) (uintptr_t) tp1->whoTo,
 							    tp1->rec.data.TSN_seq);
 						}
 						sctp_flight_size_decrease(tp1);
@@ -4461,6 +4472,11 @@ sctp_handle_sack(struct mbuf *m, int offset_seg, int offset_dup,
 #endif
 			}
 		}
+		if ((asoc->strmout[tp1->rec.data.stream_number].chunks_on_queues == 0) &&
+		    (asoc->strmout[tp1->rec.data.stream_number].state == SCTP_STREAM_RESET_PENDING) &&
+		    TAILQ_EMPTY(&asoc->strmout[tp1->rec.data.stream_number].outqueue)) {
+			asoc->trigger_reset = 1;
+		}
 		TAILQ_REMOVE(&asoc->sent_queue, tp1, sctp_next);
 		if (PR_SCTP_ENABLED(tp1->flags)) {
 			if (asoc->pr_sctp_cnt != 0)
@@ -4559,7 +4575,7 @@ sctp_handle_sack(struct mbuf *m, int offset_seg, int offset_dup,
 					sctp_misc_ints(SCTP_FLIGHT_LOG_UP_REVOKE,
 					    tp1->whoTo->flight_size,
 					    tp1->book_size,
-					    (uintptr_t) tp1->whoTo,
+					    (uint32_t) (uintptr_t) tp1->whoTo,
 					    tp1->rec.data.TSN_seq);
 				}
 				sctp_flight_size_increase(tp1);

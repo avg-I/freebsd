@@ -68,6 +68,8 @@ __FBSDID("$FreeBSD$");
 
 /* Largest length of a chunk */
 #define SCTP_MAX_CHUNK_LENGTH 0xffff
+/* Largest length of an error cause */
+#define SCTP_MAX_CAUSE_LENGTH 0xffff
 /* Number of addresses where we just skip the counting */
 #define SCTP_COUNT_LIMIT 40
 
@@ -978,10 +980,7 @@ __FBSDID("$FreeBSD$");
      (((uint8_t *)&(a)->s_addr)[1] == 168)))
 
 #define IN4_ISLOOPBACK_ADDRESS(a) \
-    ((((uint8_t *)&(a)->s_addr)[0] == 127) && \
-     (((uint8_t *)&(a)->s_addr)[1] == 0) && \
-     (((uint8_t *)&(a)->s_addr)[2] == 0) && \
-     (((uint8_t *)&(a)->s_addr)[3] == 1))
+    (((uint8_t *)&(a)->s_addr)[0] == 127)
 
 #define IN4_ISLINKLOCAL_ADDRESS(a) \
     ((((uint8_t *)&(a)->s_addr)[0] == 169) && \

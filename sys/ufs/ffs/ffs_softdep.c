@@ -1937,9 +1937,9 @@ softdep_waitidle(struct mount *mp, int flags __unused)
 		vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY);
 		error = VOP_FSYNC(devvp, MNT_WAIT, td);
 		VOP_UNLOCK(devvp, 0);
+		ACQUIRE_LOCK(ump);
 		if (error != 0)
 			break;
-		ACQUIRE_LOCK(ump);
 	}
 	ump->softdep_req = 0;
 	if (i == SU_WAITIDLE_RETRIES && error == 0 && ump->softdep_deps != 0) {
@@ -13301,43 +13301,43 @@ softdep_ast_cleanup_proc(void)
 	bool req;
 
 	td = curthread;
-	mp = td->td_su;
-	if (mp == NULL)
-		return;
-	td->td_su = NULL;
-	error = vfs_busy(mp, MBF_NOWAIT);
-	vfs_rel(mp);
-	if (error != 0)
-		return;
-	if (ffs_own_mount(mp) && MOUNTEDSOFTDEP(mp)) {
-		ump = VFSTOUFS(mp);
-		for (;;) {
-			req = false;
-			ACQUIRE_LOCK(ump);
-			if (softdep_excess_items(ump, D_INODEDEP)) {
-				req = true;
-				request_cleanup(mp, FLUSH_INODES);
-			}
-			if (softdep_excess_items(ump, D_DIRREM)) {
-				req = true;
-				request_cleanup(mp, FLUSH_BLOCKS);
-			}
-			FREE_LOCK(ump);
-			if (softdep_excess_items(ump, D_NEWBLK) ||
-			    softdep_excess_items(ump, D_ALLOCDIRECT) ||
-			    softdep_excess_items(ump, D_ALLOCINDIR)) {
-				error = vn_start_write(NULL, &mp, V_WAIT);
-				if (error == 0) {
+	while ((mp = td->td_su) != NULL) {
+		td->td_su = NULL;
+		error = vfs_busy(mp, MBF_NOWAIT);
+		vfs_rel(mp);
+		if (error != 0)
+			return;
+		if (ffs_own_mount(mp) && MOUNTEDSOFTDEP(mp)) {
+			ump = VFSTOUFS(mp);
+			for (;;) {
+				req = false;
+				ACQUIRE_LOCK(ump);
+				if (softdep_excess_items(ump, D_INODEDEP)) {
 					req = true;
-					VFS_SYNC(mp, MNT_WAIT);
-					vn_finished_write(mp);
+					request_cleanup(mp, FLUSH_INODES);
 				}
+				if (softdep_excess_items(ump, D_DIRREM)) {
+					req = true;
+					request_cleanup(mp, FLUSH_BLOCKS);
+				}
+				FREE_LOCK(ump);
+				if (softdep_excess_items(ump, D_NEWBLK) ||
+				    softdep_excess_items(ump, D_ALLOCDIRECT) ||
+				    softdep_excess_items(ump, D_ALLOCINDIR)) {
+					error = vn_start_write(NULL, &mp,
+					    V_WAIT);
+					if (error == 0) {
+						req = true;
+						VFS_SYNC(mp, MNT_WAIT);
+						vn_finished_write(mp);
+					}
+				}
+				if ((td->td_pflags & TDP_KTHREAD) != 0 || !req)
+					break;
 			}
-			if ((td->td_pflags & TDP_KTHREAD) != 0 || !req)
-				break;
 		}
+		vfs_unbusy(mp);
 	}
-	vfs_unbusy(mp);
 }
 
 /*

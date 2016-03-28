@@ -45,6 +45,7 @@ __FBSDID("$FreeBSD$");
 #include <machine/resource.h>
 #include <machine/stdarg.h>
 #include <vm/vm.h>
+#include <vm/vm_param.h>
 #include <vm/pmap.h>
 
 #include "ioat.h"
@@ -83,11 +84,17 @@ static inline void _ioat_test_log(int verbosity, const char *fmt, ...);
 static void
 ioat_test_transaction_destroy(struct test_transaction *tx)
 {
+	struct ioat_test *test;
 	int i;
+
+	test = tx->test;
 
 	for (i = 0; i < IOAT_MAX_BUFS; i++) {
 		if (tx->buf[i] != NULL) {
-			contigfree(tx->buf[i], tx->length, M_IOAT_TEST);
+			if (test->testkind == IOAT_TEST_DMA_8K)
+				free(tx->buf[i], M_IOAT_TEST);
+			else
+				contigfree(tx->buf[i], tx->length, M_IOAT_TEST);
 			tx->buf[i] = NULL;
 		}
 	}
@@ -96,8 +103,8 @@ ioat_test_transaction_destroy(struct test_transaction *tx)
 }
 
 static struct
-test_transaction *ioat_test_transaction_create(unsigned num_buffers,
-    uint32_t buffer_size)
+test_transaction *ioat_test_transaction_create(struct ioat_test *test,
+    unsigned num_buffers)
 {
 	struct test_transaction *tx;
 	unsigned i;
@@ -106,11 +113,16 @@ test_transaction *ioat_test_transaction_create(unsigned num_buffers,
 	if (tx == NULL)
 		return (NULL);
 
-	tx->length = buffer_size;
+	tx->length = test->buffer_size;
 
 	for (i = 0; i < num_buffers; i++) {
-		tx->buf[i] = contigmalloc(buffer_size, M_IOAT_TEST, M_NOWAIT,
-		    0, BUS_SPACE_MAXADDR, PAGE_SIZE, 0);
+		if (test->testkind == IOAT_TEST_DMA_8K)
+			tx->buf[i] = malloc(test->buffer_size, M_IOAT_TEST,
+			    M_NOWAIT);
+		else
+			tx->buf[i] = contigmalloc(test->buffer_size,
+			    M_IOAT_TEST, M_NOWAIT, 0, BUS_SPACE_MAXADDR,
+			    PAGE_SIZE, 0);
 
 		if (tx->buf[i] == NULL) {
 			ioat_test_transaction_destroy(tx);
@@ -120,23 +132,58 @@ test_transaction *ioat_test_transaction_create(unsigned num_buffers,
 	return (tx);
 }
 
+static void
+dump_hex(void *p, size_t chunks)
+{
+	size_t i, j;
+
+	for (i = 0; i < chunks; i++) {
+		for (j = 0; j < 8; j++)
+			printf("%08x ", ((uint32_t *)p)[i * 8 + j]);
+		printf("\n");
+	}
+}
+
 static bool
 ioat_compare_ok(struct test_transaction *tx)
 {
-	uint32_t i;
+	struct ioat_test *test;
+	char *dst, *src;
+	uint32_t i, j;
+
+	test = tx->test;
 
 	for (i = 0; i < tx->depth; i++) {
-		if (memcmp(tx->buf[2*i], tx->buf[2*i+1], tx->length) != 0)
-			return (false);
+		dst = tx->buf[2 * i + 1];
+		src = tx->buf[2 * i];
+
+		if (test->testkind == IOAT_TEST_FILL) {
+			for (j = 0; j < tx->length; j += sizeof(uint64_t)) {
+				if (memcmp(src, &dst[j],
+					MIN(sizeof(uint64_t), tx->length - j))
+				    != 0)
+					return (false);
+			}
+		} else if (test->testkind == IOAT_TEST_DMA) {
+			if (memcmp(src, dst, tx->length) != 0)
+				return (false);
+		} else if (test->testkind == IOAT_TEST_RAW_DMA) {
+			if (test->raw_write)
+				dst = test->raw_vtarget;
+			dump_hex(dst, tx->length / 32);
+		}
 	}
 	return (true);
 }
 
 static void
-ioat_dma_test_callback(void *arg)
+ioat_dma_test_callback(void *arg, int error)
 {
 	struct test_transaction *tx;
 	struct ioat_test *test;
+
+	if (error != 0)
+		ioat_test_log(0, "%s: Got error: %d\n", __func__, error);
 
 	tx = arg;
 	test = tx->test;
@@ -161,8 +208,7 @@ ioat_test_prealloc_memory(struct ioat_test *test, int index)
 	struct test_transaction *tx;
 
 	for (i = 0; i < test->transactions; i++) {
-		tx = ioat_test_transaction_create(test->chain_depth * 2,
-		    test->buffer_size);
+		tx = ioat_test_transaction_create(test, test->chain_depth * 2);
 		if (tx == NULL) {
 			ioat_test_log(0, "tx == NULL - memory exhausted\n");
 			test->status[IOAT_TEST_NO_MEMORY]++;
@@ -208,7 +254,10 @@ ioat_test_submit_1_tx(struct ioat_test *test, bus_dmaengine_t dma)
 	struct bus_dmadesc *desc;
 	bus_dmaengine_callback_t cb;
 	bus_addr_t src, dest;
+	uint64_t fillpattern;
 	uint32_t i, flags;
+
+	desc = NULL;
 
 	IT_LOCK();
 	while (TAILQ_EMPTY(&test->free_q))
@@ -219,10 +268,25 @@ ioat_test_submit_1_tx(struct ioat_test *test, bus_dmaengine_t dma)
 	TAILQ_INSERT_HEAD(&test->pend_q, tx, entry);
 	IT_UNLOCK();
 
-	ioat_acquire(dma);
+	if (test->testkind != IOAT_TEST_MEMCPY)
+		ioat_acquire(dma);
 	for (i = 0; i < tx->depth; i++) {
+		if (test->testkind == IOAT_TEST_MEMCPY) {
+			memcpy(tx->buf[2 * i + 1], tx->buf[2 * i], tx->length);
+			if (i == tx->depth - 1)
+				ioat_dma_test_callback(tx, 0);
+			continue;
+		}
+
 		src = vtophys((vm_offset_t)tx->buf[2*i]);
 		dest = vtophys((vm_offset_t)tx->buf[2*i+1]);
+
+		if (test->testkind == IOAT_TEST_RAW_DMA) {
+			if (test->raw_write)
+				dest = test->raw_target;
+			else
+				src = test->raw_target;
+		}
 
 		if (i == tx->depth - 1) {
 			cb = ioat_dma_test_callback;
@@ -232,24 +296,62 @@ ioat_test_submit_1_tx(struct ioat_test *test, bus_dmaengine_t dma)
 			flags = 0;
 		}
 
-		desc = ioat_copy(dma, src, dest, tx->length, cb, tx, flags);
+		if (test->testkind == IOAT_TEST_DMA ||
+		    test->testkind == IOAT_TEST_RAW_DMA)
+			desc = ioat_copy(dma, dest, src, tx->length, cb, tx,
+			    flags);
+		else if (test->testkind == IOAT_TEST_FILL) {
+			fillpattern = *(uint64_t *)tx->buf[2*i];
+			desc = ioat_blockfill(dma, dest, fillpattern,
+			    tx->length, cb, tx, flags);
+		} else if (test->testkind == IOAT_TEST_DMA_8K) {
+			bus_addr_t src2, dst2;
+
+			src2 = vtophys((vm_offset_t)tx->buf[2*i] + PAGE_SIZE);
+			dst2 = vtophys((vm_offset_t)tx->buf[2*i+1] + PAGE_SIZE);
+
+			desc = ioat_copy_8k_aligned(dma, dest, dst2, src, src2,
+			    cb, tx, flags);
+		}
 		if (desc == NULL)
-			panic("Failed to allocate a ring slot "
-			    "-- this shouldn't happen!");
+			break;
 	}
+	if (test->testkind == IOAT_TEST_MEMCPY)
+		return;
 	ioat_release(dma);
+
+	/*
+	 * We couldn't issue an IO -- either the device is being detached or
+	 * the HW reset.  Essentially spin until the device comes back up or
+	 * our timer expires.
+	 */
+	if (desc == NULL && tx->depth > 0) {
+		atomic_add_32(&test->status[IOAT_TEST_NO_DMA_ENGINE], tx->depth);
+		IT_LOCK();
+		TAILQ_REMOVE(&test->pend_q, tx, entry);
+		TAILQ_INSERT_HEAD(&test->free_q, tx, entry);
+		IT_UNLOCK();
+	}
 }
 
 static void
 ioat_dma_test(void *arg)
 {
+	struct ioat_softc *ioat;
 	struct ioat_test *test;
 	bus_dmaengine_t dmaengine;
 	uint32_t loops;
-	int index, rc, start, end;
+	int index, rc, start, end, error;
 
 	test = arg;
 	memset(__DEVOLATILE(void *, test->status), 0, sizeof(test->status));
+
+	if (test->testkind == IOAT_TEST_DMA_8K &&
+	    test->buffer_size != 2 * PAGE_SIZE) {
+		ioat_test_log(0, "Asked for 8k test and buffer size isn't 8k\n");
+		test->status[IOAT_TEST_INVALID_INPUT]++;
+		return;
+	}
 
 	if (test->buffer_size > 1024 * 1024) {
 		ioat_test_log(0, "Buffer size too large >1MB\n");
@@ -279,11 +381,57 @@ ioat_dma_test(void *arg)
 		return;
 	}
 
+	if (test->testkind >= IOAT_NUM_TESTKINDS) {
+		ioat_test_log(0, "Invalid kind %u\n",
+		    (unsigned)test->testkind);
+		test->status[IOAT_TEST_INVALID_INPUT]++;
+		return;
+	}
+
 	dmaengine = ioat_get_dmaengine(test->channel_index);
 	if (dmaengine == NULL) {
 		ioat_test_log(0, "Couldn't acquire dmaengine\n");
 		test->status[IOAT_TEST_NO_DMA_ENGINE]++;
 		return;
+	}
+	ioat = to_ioat_softc(dmaengine);
+
+	if (test->testkind == IOAT_TEST_FILL &&
+	    (ioat->capabilities & IOAT_DMACAP_BFILL) == 0)
+	{
+		ioat_test_log(0,
+		    "Hardware doesn't support block fill, aborting test\n");
+		test->status[IOAT_TEST_INVALID_INPUT]++;
+		goto out;
+	}
+
+	if (test->coalesce_period > ioat->intrdelay_max) {
+		ioat_test_log(0,
+		    "Hardware doesn't support intrdelay of %u us.\n",
+		    (unsigned)test->coalesce_period);
+		test->status[IOAT_TEST_INVALID_INPUT]++;
+		goto out;
+	}
+	error = ioat_set_interrupt_coalesce(dmaengine, test->coalesce_period);
+	if (error == ENODEV && test->coalesce_period == 0)
+		error = 0;
+	if (error != 0) {
+		ioat_test_log(0, "ioat_set_interrupt_coalesce: %d\n", error);
+		test->status[IOAT_TEST_INVALID_INPUT]++;
+		goto out;
+	}
+
+	if (test->zero_stats)
+		memset(&ioat->stats, 0, sizeof(ioat->stats));
+
+	if (test->testkind == IOAT_TEST_RAW_DMA) {
+		if (test->raw_is_virtual) {
+			test->raw_vtarget = (void *)test->raw_target;
+			test->raw_target = vtophys(test->raw_vtarget);
+		} else {
+			test->raw_vtarget = pmap_mapdev(test->raw_target,
+			    test->buffer_size);
+		}
 	}
 
 	index = g_thread_index++;
@@ -299,7 +447,7 @@ ioat_dma_test(void *arg)
 	rc = ioat_test_prealloc_memory(test, index);
 	if (rc != 0) {
 		ioat_test_log(0, "prealloc_memory: %d\n", rc);
-		return;
+		goto out;
 	}
 	wmb();
 
@@ -330,6 +478,11 @@ ioat_dma_test(void *arg)
 	    ticks - start, ticks - end, (ticks - start) / hz);
 
 	ioat_test_release_memory(test);
+out:
+	if (test->testkind == IOAT_TEST_RAW_DMA && !test->raw_is_virtual)
+		pmap_unmapdev((vm_offset_t)test->raw_vtarget,
+		    test->buffer_size);
+	ioat_put_dmaengine(dmaengine);
 }
 
 static int

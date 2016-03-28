@@ -271,11 +271,19 @@
                     ..
                 ..
             ..
+            nss
+            ..
             regex
                 data
                 ..
             ..
+            resolv
+            ..
+            rpc
+            ..
             ssp
+            ..
+            setjmp
             ..
             stdio
             ..
@@ -370,11 +378,47 @@
         ..
         file
         ..
+        geom
+            class
+                concat
+                ..
+                eli
+                ..
+                gate
+                ..
+                gpt
+                ..
+                mirror
+                ..
+                nop
+                ..
+                raid3
+                ..
+                shsec
+                ..
+                stripe
+                ..
+                uzip
+                    etalon
+                    ..
+                ..
+            ..
+        ..
         kern
+            acct
+            ..
             execve
+            ..
+            pipe
             ..
         ..
         kqueue
+        ..
+        mac
+            bsdextended
+            ..
+            portacl
+            ..
         ..
         mqueue
         ..
@@ -552,6 +596,8 @@
         ..
         lastcomm
         ..
+        limits
+        ..
         m4
         ..
         mkimg
@@ -603,6 +649,8 @@
         nmtree
         ..
         pw
+        ..
+        rpcbind
         ..
         sa
         ..

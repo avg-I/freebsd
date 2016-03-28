@@ -31,6 +31,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sockio.h>
 #include <sys/mbuf.h>
 #include <sys/kernel.h>
+#include <sys/malloc.h>
 #include <sys/socket.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
@@ -155,7 +156,6 @@ static void	otus_free_txcmd(struct otus_softc *, struct otus_tx_cmd *);
 
 void		otus_next_scan(void *, int);
 static void	otus_tx_task(void *, int pending);
-static void	otus_wme_update_task(void *, int pending);
 void		otus_do_async(struct otus_softc *,
 		    void (*)(struct otus_softc *, void *), void *, int);
 int		otus_newstate(struct ieee80211vap *, enum ieee80211_state,
@@ -177,8 +177,9 @@ static int	otus_tx(struct otus_softc *, struct ieee80211_node *,
 		    const struct ieee80211_bpf_params *);
 int		otus_ioctl(struct ifnet *, u_long, caddr_t);
 int		otus_set_multi(struct otus_softc *);
-static void	otus_updateedca(struct otus_softc *sc);
-static void	otus_updateslot(struct otus_softc *sc);
+static int	otus_updateedca(struct ieee80211com *);
+static void	otus_updateedca_locked(struct otus_softc *);
+static void	otus_updateslot(struct otus_softc *);
 int		otus_init_mac(struct otus_softc *);
 uint32_t	otus_phy_get_def(struct otus_softc *, uint32_t);
 int		otus_set_board_values(struct otus_softc *,
@@ -300,7 +301,6 @@ otus_attach(device_t self)
 	TIMEOUT_TASK_INIT(taskqueue_thread, &sc->scan_to, 0, otus_next_scan, sc);
 	TIMEOUT_TASK_INIT(taskqueue_thread, &sc->calib_to, 0, otus_calibrate_to, sc);
 	TASK_INIT(&sc->tx_task, 0, otus_tx_task, sc);
-	TASK_INIT(&sc->wme_update_task, 0, otus_wme_update_task, sc);
 	mbufq_init(&sc->sc_snd, ifqmaxlen);
 
 	iface_index = 0;
@@ -345,7 +345,6 @@ otus_detach(device_t self)
 	taskqueue_drain_timeout(taskqueue_thread, &sc->scan_to);
 	taskqueue_drain_timeout(taskqueue_thread, &sc->calib_to);
 	taskqueue_drain(taskqueue_thread, &sc->tx_task);
-	taskqueue_drain(taskqueue_thread, &sc->wme_update_task);
 
 	otus_close_pipes(sc);
 #if 0
@@ -590,44 +589,6 @@ otus_set_channel(struct ieee80211com *ic)
 	OTUS_UNLOCK(sc);
 }
 
-static void
-otus_wme_update_task(void *arg, int pending)
-{
-	struct otus_softc *sc = arg;
-
-	OTUS_LOCK(sc);
-	/*
-	 * XXX TODO: take temporary copy of EDCA information
-	 * when scheduling this so we have a more time-correct view
-	 * of things.
-	 */
-	otus_updateedca(sc);
-	OTUS_UNLOCK(sc);
-}
-
-static void
-otus_wme_schedule_update(struct otus_softc *sc)
-{
-
-	taskqueue_enqueue(taskqueue_thread, &sc->wme_update_task);
-}
-
-/*
- * This is called by net80211 in RX packet context, so we
- * can't sleep here.
- *
- * TODO: have net80211 schedule an update itself for its
- * own internal taskqueue.
- */
-static int
-otus_wme_update(struct ieee80211com *ic)
-{
-	struct otus_softc *sc = ic->ic_softc;
-
-	otus_wme_schedule_update(sc);
-	return (0);
-}
-
 static int
 otus_ampdu_enable(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap)
 {
@@ -664,8 +625,8 @@ otus_attachhook(struct otus_softc *sc)
 	struct ieee80211com *ic = &sc->sc_ic;
 	usb_device_request_t req;
 	uint32_t in, out;
+	uint8_t bands[howmany(IEEE80211_MODE_MAX, 8)];
 	int error;
-	uint8_t bands;
 
 	/* Not locked */
 	error = otus_load_firmware(sc, "otusfw_init", AR_FW_INIT_ADDR);
@@ -783,19 +744,19 @@ otus_attachhook(struct otus_softc *sc)
 	otus_get_chanlist(sc);
 #else
 	/* Set supported .11b and .11g rates. */
-	bands = 0;
+	memset(bands, 0, sizeof(bands));
 	if (sc->eeprom.baseEepHeader.opCapFlags & AR5416_OPFLAGS_11G) {
-		setbit(&bands, IEEE80211_MODE_11B);
-		setbit(&bands, IEEE80211_MODE_11G);
+		setbit(bands, IEEE80211_MODE_11B);
+		setbit(bands, IEEE80211_MODE_11G);
 	}
 	if (sc->eeprom.baseEepHeader.opCapFlags & AR5416_OPFLAGS_11A) {
-		setbit(&bands, IEEE80211_MODE_11A);
+		setbit(bands, IEEE80211_MODE_11A);
 	}
 #if 0
 	if (sc->sc_ht)
-		setbit(&bands, IEEE80211_MODE_11NG);
+		setbit(bands, IEEE80211_MODE_11NG);
 #endif
-	ieee80211_init_channels(ic, NULL, &bands);
+	ieee80211_init_channels(ic, NULL, bands);
 #endif
 
 	ieee80211_ifattach(ic);
@@ -811,7 +772,7 @@ otus_attachhook(struct otus_softc *sc)
 	ic->ic_transmit = otus_transmit;
 	ic->ic_update_chw = otus_update_chw;
 	ic->ic_ampdu_enable = otus_ampdu_enable;
-	ic->ic_wme.wme_update = otus_wme_update;
+	ic->ic_wme.wme_update = otus_updateedca;
 	ic->ic_newassoc = otus_newassoc;
 	ic->ic_node_alloc = otus_node_alloc;
 
@@ -1645,8 +1606,8 @@ otus_sub_rxeof(struct otus_softc *sc, uint8_t *buf, int len, struct mbufq *rxq)
 	}
 	tail = (struct ar_rx_tail *)(plcp + len - sizeof (*tail));
 
-	/* Discard error frames. */
-	if (__predict_false(tail->error != 0)) {
+	/* Discard error frames; don't discard BAD_RA (eg monitor mode); let net80211 do that */
+	if (__predict_false((tail->error & ~AR_RX_ERROR_BAD_RA) != 0)) {
 		OTUS_DPRINTF(sc, OTUS_DEBUG_RXDONE, "error frame 0x%02x\n", tail->error);
 		if (tail->error & AR_RX_ERROR_FCS) {
 			OTUS_DPRINTF(sc, OTUS_DEBUG_RXDONE, "bad FCS\n");
@@ -1671,10 +1632,14 @@ otus_sub_rxeof(struct otus_softc *sc, uint8_t *buf, int len, struct mbufq *rxq)
 
 	wh = (struct ieee80211_frame *)(plcp + AR_PLCP_HDR_LEN);
 
+	/*
+	 * TODO: I see > 2KiB buffers in this path; is it A-MSDU or something?
+	 */
 	m = m_get2(mlen, M_NOWAIT, MT_DATA, M_PKTHDR);
 	if (m == NULL) {
-		device_printf(sc->sc_dev, "%s: failed m_get2()\n", __func__);
+		device_printf(sc->sc_dev, "%s: failed m_get2() (mlen=%d)\n", __func__, mlen);
 		counter_u64_add(ic->ic_ierrors, 1);
+		return;
 	}
 
 	/* Finalize mbuf. */
@@ -2379,8 +2344,25 @@ otus_set_multi(struct otus_softc *sc)
 	return (r);
 }
 
+static int
+otus_updateedca(struct ieee80211com *ic)
+{
+	struct otus_softc *sc = ic->ic_softc;
+
+	OTUS_LOCK(sc);
+	/*
+	 * XXX TODO: take temporary copy of EDCA information
+	 * when scheduling this so we have a more time-correct view
+	 * of things.
+	 * XXX TODO: this can be done on the net80211 level
+	 */
+	otus_updateedca_locked(sc);
+	OTUS_UNLOCK(sc);
+	return (0);
+}
+
 static void
-otus_updateedca(struct otus_softc *sc)
+otus_updateedca_locked(struct otus_softc *sc)
 {
 #define EXP2(val)	((1 << (val)) - 1)
 #define AIFS(val)	((val) * 9 + 10)
@@ -2442,7 +2424,7 @@ otus_updateslot(struct otus_softc *sc)
 
 	OTUS_LOCK_ASSERT(sc);
 
-	slottime = (ic->ic_flags & IEEE80211_F_SHSLOT) ? 9 : 20;
+	slottime = IEEE80211_GET_SLOTTIME(ic);
 	otus_write(sc, AR_MAC_REG_SLOT_TIME, slottime << 10);
 	(void)otus_write_barrier(sc);
 }
@@ -2469,8 +2451,8 @@ otus_init_mac(struct otus_softc *sc)
 	otus_write(sc, AR_MAC_REG_BACKOFF_PROTECT, 0x105);
 	otus_write(sc, AR_MAC_REG_AMPDU_FACTOR, 0x10000a);
 	/* Filter any control frames, BAR is bit 24. */
-	otus_write(sc, AR_MAC_REG_FRAMETYPE_FILTER, 0x0500ffff);
-	otus_write(sc, AR_MAC_REG_RX_CONTROL, 0x1);
+//	otus_write(sc, AR_MAC_REG_FRAMETYPE_FILTER, 0x0500ffff);
+//	otus_write(sc, AR_MAC_REG_RX_CONTROL, 0x1);
 	otus_write(sc, AR_MAC_REG_BASIC_RATE, 0x150f);
 	otus_write(sc, AR_MAC_REG_MANDATORY_RATE, 0x150f);
 	otus_write(sc, AR_MAC_REG_RTS_CTS_RATE, 0x10b01bb);
@@ -2504,7 +2486,7 @@ otus_init_mac(struct otus_softc *sc)
 		return error;
 
 	/* Set default EDCA parameters. */
-	otus_updateedca(sc);
+	otus_updateedca_locked(sc);
 
 	return 0;
 }
@@ -3070,6 +3052,57 @@ otus_led_newstate_type3(struct otus_softc *sc)
 #endif
 }
 
+/*
+ * TODO:
+ *
+ * + If in monitor mode, set BSSID to all zeros, else the node BSSID.
+ * + Handle STA + monitor (eg tcpdump/promisc/radiotap) as well as
+ *   pure monitor mode.
+ */
+static int
+otus_set_operating_mode(struct otus_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	uint32_t rx_ctrl;
+	uint32_t frm_filt;
+	uint32_t cam_mode;
+	uint32_t rx_sniffer;
+
+	OTUS_LOCK_ASSERT(sc);
+
+	/* XXX TODO: too many magic constants */
+	rx_ctrl = 0x1;
+	/* Filter any control frames, BAR is bit 24. */
+	frm_filt = 0x0500ffff;
+	cam_mode = 0x0f000002;	/* XXX STA */
+	rx_sniffer = 0x20000000;
+
+	switch (ic->ic_opmode) {
+	case IEEE80211_M_STA:
+		cam_mode = 0x0f000002;	/* XXX STA */
+		rx_ctrl = 0x1;
+		frm_filt = 0x0500ffff;
+		rx_sniffer = 0x20000000;
+		break;
+	case IEEE80211_M_MONITOR:
+		cam_mode = 0x0f000002;	/* XXX STA */
+		rx_ctrl = 0x1;
+		frm_filt = 0xffffffff;
+		rx_sniffer = 0x20000001;
+		break;
+	default:
+		break;
+	}
+
+	otus_write(sc, AR_MAC_REG_SNIFFER, rx_sniffer);
+	otus_write(sc, AR_MAC_REG_CAM_MODE, cam_mode);
+	otus_write(sc, AR_MAC_REG_FRAMETYPE_FILTER, frm_filt);
+	otus_write(sc, AR_MAC_REG_RX_CONTROL, cam_mode);
+
+	(void) otus_write_barrier(sc);
+	return (0);
+}
+
 int
 otus_init(struct otus_softc *sc)
 {
@@ -3092,48 +3125,7 @@ otus_init(struct otus_softc *sc)
 	}
 
 	(void) otus_set_macaddr(sc, ic->ic_macaddr);
-
-#if 0
-	switch (ic->ic_opmode) {
-#ifdef notyet
-#ifndef IEEE80211_STA_ONLY
-	case IEEE80211_M_HOSTAP:
-		otus_write(sc, AR_MAC_REG_CAM_MODE, 0x0f0000a1);
-		otus_write(sc, AR_MAC_REG_RX_CONTROL, 0x1);
-		break;
-	case IEEE80211_M_IBSS:
-		otus_write(sc, AR_MAC_REG_CAM_MODE, 0x0f000000);
-		otus_write(sc, AR_MAC_REG_RX_CONTROL, 0x1);
-		break;
-#endif
-#endif
-	case IEEE80211_M_STA:
-		otus_write(sc, AR_MAC_REG_CAM_MODE, 0x0f000002);
-		otus_write(sc, AR_MAC_REG_RX_CONTROL, 0x1);
-		break;
-	default:
-		break;
-	}
-#endif
-
-	switch (ic->ic_opmode) {
-	case IEEE80211_M_STA:
-		otus_write(sc, AR_MAC_REG_CAM_MODE, 0x0f000002);
-		otus_write(sc, AR_MAC_REG_RX_CONTROL, 0x1);
-		/* XXX set frametype filter? */
-		break;
-	case IEEE80211_M_MONITOR:
-		otus_write(sc, AR_MAC_REG_FRAMETYPE_FILTER, 0xffffffff);
-		break;
-	default:
-		break;
-	}
-
-	/* XXX ic_opmode? */
-	otus_write(sc, AR_MAC_REG_SNIFFER,
-	    (ic->ic_opmode == IEEE80211_M_MONITOR) ? 0x2000001 : 0x2000000);
-
-	(void)otus_write_barrier(sc);
+	(void) otus_set_operating_mode(sc);
 
 	sc->bb_reset = 1;	/* Force cold reset. */
 
@@ -3171,7 +3163,6 @@ otus_stop(struct otus_softc *sc)
 	taskqueue_drain_timeout(taskqueue_thread, &sc->scan_to);
 	taskqueue_drain_timeout(taskqueue_thread, &sc->calib_to);
 	taskqueue_drain(taskqueue_thread, &sc->tx_task);
-	taskqueue_drain(taskqueue_thread, &sc->wme_update_task);
 
 	OTUS_LOCK(sc);
 	sc->sc_running = 0;

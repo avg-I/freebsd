@@ -21,10 +21,11 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011, 2015 by Delphix. All rights reserved.
- * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
+ * Copyright 2015 Nexenta Systems, Inc.  All rights reserved.
  * Copyright 2013 Martin Matuska <mm@FreeBSD.org>. All rights reserved.
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
  * Copyright 2013 Saso Kiselkov. All rights reserved.
+ * Copyright (c) 2014 Integros [integros.com]
  */
 
 #include <sys/zfs_context.h>
@@ -255,7 +256,7 @@ int zfs_flags = 0;
  */
 boolean_t zfs_recover = B_FALSE;
 SYSCTL_DECL(_vfs_zfs);
-SYSCTL_INT(_vfs_zfs, OID_AUTO, recover, CTLFLAG_RDTUN, &zfs_recover, 0,
+SYSCTL_INT(_vfs_zfs, OID_AUTO, recover, CTLFLAG_RWTUN, &zfs_recover, 0,
     "Try to recover from otherwise-fatal errors.");
 
 static int
@@ -449,14 +450,16 @@ spa_config_tryenter(spa_t *spa, int locks, void *tag, krw_t rw)
 		if (rw == RW_READER) {
 			if (scl->scl_writer || scl->scl_write_wanted) {
 				mutex_exit(&scl->scl_lock);
-				spa_config_exit(spa, locks ^ (1 << i), tag);
+				spa_config_exit(spa, locks & ((1 << i) - 1),
+				    tag);
 				return (0);
 			}
 		} else {
 			ASSERT(scl->scl_writer != curthread);
 			if (!refcount_is_zero(&scl->scl_count)) {
 				mutex_exit(&scl->scl_lock);
-				spa_config_exit(spa, locks ^ (1 << i), tag);
+				spa_config_exit(spa, locks & ((1 << i) - 1),
+				    tag);
 				return (0);
 			}
 			scl->scl_writer = curthread;
@@ -1835,7 +1838,13 @@ dva_get_dsize_sync(spa_t *spa, const dva_t *dva)
 	ASSERT(spa_config_held(spa, SCL_ALL, RW_READER) != 0);
 
 	if (asize != 0 && spa->spa_deflate) {
-		vdev_t *vd = vdev_lookup_top(spa, DVA_GET_VDEV(dva));
+		uint64_t vdev = DVA_GET_VDEV(dva);
+		vdev_t *vd = vdev_lookup_top(spa, vdev);
+		if (vd == NULL) {
+			panic(
+			    "dva_get_dsize_sync(): bad DVA %llu:%llu",
+			    (u_longlong_t)vdev, (u_longlong_t)asize);
+		}
 		dsize = (asize >> SPA_MINBLOCKSHIFT) * vd->vdev_deflate_ratio;
 	}
 

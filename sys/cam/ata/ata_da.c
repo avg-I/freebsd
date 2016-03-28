@@ -490,6 +490,14 @@ static struct ada_quirk_entry ada_quirk_table[] =
 	},
 	{
 		/*
+		 * Samsung SM863 Series SSDs
+		 * 4k optimised
+		 */
+		{ T_DIRECT, SIP_MEDIA_FIXED, "*", "SAMSUNG MZ7KM*", "*" },
+		/*quirks*/ADA_Q_4K
+	},
+	{
+		/*
 		 * SuperTalent TeraDrive CT SSDs
 		 * 4k optimised & trim only works in 4k requests + 4k aligned
 		 */
@@ -630,8 +638,6 @@ static struct periph_driver adadriver =
 };
 
 PERIPHDRIVER_DECLARE(ada, adadriver);
-
-static MALLOC_DEFINE(M_ATADA, "ata_da", "ata_da buffers");
 
 static int
 adaopen(struct disk *dp)
@@ -1545,12 +1551,26 @@ adastart(struct cam_periph *periph, union ccb *start_ccb)
 		}
 		switch (bp->bio_cmd) {
 		case BIO_WRITE:
-			softc->flags |= ADA_FLAG_DIRTY;
-			/* FALLTHROUGH */
 		case BIO_READ:
 		{
 			uint64_t lba = bp->bio_pblkno;
 			uint16_t count = bp->bio_bcount / softc->params.secsize;
+			void *data_ptr;
+			int rw_op;
+
+			if (bp->bio_cmd == BIO_WRITE) {
+				softc->flags |= ADA_FLAG_DIRTY;
+				rw_op = CAM_DIR_OUT;
+			} else {
+				rw_op = CAM_DIR_IN;
+			}
+
+			data_ptr = bp->bio_data;
+			if ((bp->bio_flags & (BIO_UNMAPPED|BIO_VLIST)) != 0) {
+				rw_op |= CAM_DATA_BIO;
+				data_ptr = bp;
+			}
+
 #ifdef ADA_TEST_FAILURE
 			int fail = 0;
 
@@ -1595,12 +1615,9 @@ adastart(struct cam_periph *periph, union ccb *start_ccb)
 			cam_fill_ataio(ataio,
 			    ada_retry_count,
 			    adadone,
-			    (bp->bio_cmd == BIO_READ ? CAM_DIR_IN :
-				CAM_DIR_OUT) | ((bp->bio_flags & BIO_UNMAPPED)
-				!= 0 ? CAM_DATA_BIO : 0),
+			    rw_op,
 			    tag_code,
-			    ((bp->bio_flags & BIO_UNMAPPED) != 0) ? (void *)bp :
-				bp->bio_data,
+			    data_ptr,
 			    bp->bio_bcount,
 			    ada_default_timeout*1000);
 

@@ -61,6 +61,14 @@ __FBSDID("$FreeBSD$");
 #include <machine/cpu-v6.h>
 #include <machine/md_var.h>
 
+#if __ARM_ARCH < 6
+#define	BUSDMA_DCACHE_ALIGN	arm_dcache_align
+#define	BUSDMA_DCACHE_MASK	arm_dcache_align_mask
+#else
+#define	BUSDMA_DCACHE_ALIGN	cpuinfo.dcache_line_size
+#define	BUSDMA_DCACHE_MASK	cpuinfo.dcache_line_mask
+#endif
+
 #define	MAX_BPAGES		64
 #define	MAX_DMA_SEGMENTS	4096
 #define	BUS_DMA_EXCL_BOUNCE	BUS_DMA_BUS2
@@ -109,8 +117,8 @@ struct bounce_page {
 
 struct sync_list {
 	vm_offset_t	vaddr;		/* kva of client data */
+	bus_addr_t	paddr;		/* physical address */
 	vm_page_t	pages;		/* starting page of client data */
-	vm_offset_t	dataoffs;	/* page offset of client data */
 	bus_size_t	datacount;	/* client data count */
 };
 
@@ -234,7 +242,7 @@ busdma_init(void *dummy)
 
 	/* Create a cache of buffers in standard (cacheable) memory. */
 	standard_allocator = busdma_bufalloc_create("buffer",
-	    arm_dcache_align,	/* minimum_alignment */
+	    BUSDMA_DCACHE_ALIGN,/* minimum_alignment */
 	    NULL,		/* uma_alloc func */
 	    NULL,		/* uma_free func */
 	    uma_flags);		/* uma_zcreate_flags */
@@ -253,7 +261,7 @@ busdma_init(void *dummy)
 	 * BUS_DMA_COHERENT (and potentially BUS_DMA_NOCACHE) flag.
 	 */
 	coherent_allocator = busdma_bufalloc_create("coherent",
-	    arm_dcache_align,	/* minimum_alignment */
+	    BUSDMA_DCACHE_ALIGN,/* minimum_alignment */
 	    busdma_bufalloc_alloc_uncacheable,
 	    busdma_bufalloc_free_uncacheable,
 	    uma_flags);	/* uma_zcreate_flags */
@@ -464,11 +472,6 @@ bus_dma_tag_create(bus_dma_tag_t parent, bus_size_t alignment,
 {
 	bus_dma_tag_t newtag;
 	int error = 0;
-
-#if 0
-	if (!parent)
-		parent = arm_root_dma_tag;
-#endif
 
 	/* Basic sanity checking. */
 	KASSERT(boundary == 0 || powerof2(boundary),
@@ -1073,17 +1076,19 @@ _bus_dmamap_load_phys(bus_dma_tag_t dmat, bus_dmamap_t map, vm_paddr_t buf,
 			    sgsize);
 		} else {
 			if (map->sync_count > 0)
-				sl_end = VM_PAGE_TO_PHYS(sl->pages) +
-				    sl->dataoffs + sl->datacount;
+				sl_end = sl->paddr + sl->datacount;
 
 			if (map->sync_count == 0 || curaddr != sl_end) {
 				if (++map->sync_count > dmat->nsegments)
 					break;
 				sl++;
 				sl->vaddr = 0;
+				sl->paddr = curaddr;
 				sl->datacount = sgsize;
 				sl->pages = PHYS_TO_VM_PAGE(curaddr);
-				sl->dataoffs = curaddr & PAGE_MASK;
+				KASSERT(sl->pages != NULL,
+				    ("%s: page at PA:0x%08lx is not in "
+				    "vm_page_array", __func__, curaddr));
 			} else
 				sl->datacount += sgsize;
 		}
@@ -1185,8 +1190,7 @@ _bus_dmamap_load_buffer(bus_dma_tag_t dmat, bus_dmamap_t map, void *buf,
 			    sgsize);
 		} else {
 			if (map->sync_count > 0) {
-				sl_pend = VM_PAGE_TO_PHYS(sl->pages) +
-				    sl->dataoffs + sl->datacount;
+				sl_pend = sl->paddr + sl->datacount;
 				sl_vend = sl->vaddr + sl->datacount;
 			}
 
@@ -1198,9 +1202,17 @@ _bus_dmamap_load_buffer(bus_dma_tag_t dmat, bus_dmamap_t map, void *buf,
 					goto cleanup;
 				sl++;
 				sl->vaddr = kvaddr;
+				sl->paddr = curaddr;
+				if (kvaddr != 0) {
+					sl->pages = NULL;
+				} else {
+					sl->pages = PHYS_TO_VM_PAGE(curaddr);
+					KASSERT(sl->pages != NULL,
+					    ("%s: page at PA:0x%08lx is not "
+					    "in vm_page_array", __func__,
+					    curaddr));
+				}
 				sl->datacount = sgsize;
-				sl->pages = PHYS_TO_VM_PAGE(curaddr);
-				sl->dataoffs = curaddr & PAGE_MASK;
 			} else
 				sl->datacount += sgsize;
 		}
@@ -1279,12 +1291,12 @@ dma_preread_safe(vm_offset_t va, vm_paddr_t pa, vm_size_t size)
 	 * as dcache_wb_poc() will do the rounding for us and works
 	 * at cacheline granularity.
 	 */
-	if (va & cpuinfo.dcache_line_mask)
+	if (va & BUSDMA_DCACHE_MASK)
 		dcache_wb_poc(va, pa, 1);
-	if ((va + size) & cpuinfo.dcache_line_mask)
+	if ((va + size) & BUSDMA_DCACHE_MASK)
 		dcache_wb_poc(va + size, pa + size, 1);
 
-	dcache_dma_preread(va, pa, size);
+	dcache_inv_poc_dma(va, pa, size);
 }
 
 static void
@@ -1296,10 +1308,10 @@ dma_dcache_sync(struct sync_list *sl, bus_dmasync_op_t op)
 	vm_offset_t va, tempva;
 	bus_size_t size;
 
-	offset = sl->dataoffs;
+	offset = sl->paddr & PAGE_MASK;
 	m = sl->pages;
 	size = sl->datacount;
-	pa = VM_PAGE_TO_PHYS(m) | offset;
+	pa = sl->paddr;
 
 	for ( ; size != 0; size -= len, pa += len, offset = 0, ++m) {
 		tempva = 0;
@@ -1307,13 +1319,13 @@ dma_dcache_sync(struct sync_list *sl, bus_dmasync_op_t op)
 			len = min(PAGE_SIZE - offset, size);
 			tempva = pmap_quick_enter_page(m);
 			va = tempva | offset;
+			KASSERT(pa == (VM_PAGE_TO_PHYS(m) | offset),
+			    ("unexpected vm_page_t phys: 0x%08x != 0x%08x",
+			    VM_PAGE_TO_PHYS(m) | offset, pa));
 		} else {
 			len = sl->datacount;
 			va = sl->vaddr;
 		}
-		KASSERT(pa == (VM_PAGE_TO_PHYS(m) | offset),
-		    ("unexpected vm_page_t phys: 0x%08x != 0x%08x",
-		    VM_PAGE_TO_PHYS(m) | offset, pa));
 
 		switch (op) {
 		case BUS_DMASYNC_PREWRITE:
@@ -1406,7 +1418,7 @@ _bus_dmamap_sync(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 		if ((op & BUS_DMASYNC_PREREAD) && !(op & BUS_DMASYNC_PREWRITE)) {
 			bpage = STAILQ_FIRST(&map->bpages);
 			while (bpage != NULL) {
-				dcache_dma_preread(bpage->vaddr, bpage->busaddr,
+				dcache_inv_poc_dma(bpage->vaddr, bpage->busaddr,
 				    bpage->datacount);
 				bpage = STAILQ_NEXT(bpage, links);
 			}

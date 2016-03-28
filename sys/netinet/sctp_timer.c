@@ -85,7 +85,7 @@ sctp_audit_retranmission_queue(struct sctp_association *asoc)
 	    asoc->sent_queue_cnt);
 }
 
-int
+static int
 sctp_threshold_management(struct sctp_inpcb *inp, struct sctp_tcb *stcb,
     struct sctp_nets *net, uint16_t threshold)
 {
@@ -111,9 +111,9 @@ sctp_threshold_management(struct sctp_inpcb *inp, struct sctp_tcb *stcb,
 				net->last_active = sctp_get_tick_count();
 				sctp_send_hb(stcb, net, SCTP_SO_NOT_LOCKED);
 				sctp_timer_stop(SCTP_TIMER_TYPE_HEARTBEAT,
-				    stcb->sctp_ep, stcb, net,
+				    inp, stcb, net,
 				    SCTP_FROM_SCTP_TIMER + SCTP_LOC_1);
-				sctp_timer_start(SCTP_TIMER_TYPE_HEARTBEAT, stcb->sctp_ep, stcb, net);
+				sctp_timer_start(SCTP_TIMER_TYPE_HEARTBEAT, inp, stcb, net);
 			}
 		}
 	}
@@ -442,6 +442,11 @@ sctp_recover_sent_list(struct sctp_tcb *stcb)
 					asoc->strmout[chk->rec.data.stream_number].chunks_on_queues--;
 				}
 			}
+			if ((asoc->strmout[chk->rec.data.stream_number].chunks_on_queues == 0) &&
+			    (asoc->strmout[chk->rec.data.stream_number].state == SCTP_STREAM_RESET_PENDING) &&
+			    TAILQ_EMPTY(&asoc->strmout[chk->rec.data.stream_number].outqueue)) {
+				asoc->trigger_reset = 1;
+			}
 			TAILQ_REMOVE(&asoc->sent_queue, chk, sctp_next);
 			if (PR_SCTP_ENABLED(chk->flags)) {
 				if (asoc->pr_sctp_cnt != 0)
@@ -657,7 +662,7 @@ start_again:
 					sctp_misc_ints(SCTP_FLIGHT_LOG_DOWN_RSND_TO,
 					    chk->whoTo->flight_size,
 					    chk->book_size,
-					    (uintptr_t) chk->whoTo,
+					    (uint32_t) (uintptr_t) chk->whoTo,
 					    chk->rec.data.TSN_seq);
 				}
 				sctp_flight_size_decrease(chk);
@@ -785,7 +790,7 @@ start_again:
 					sctp_misc_ints(SCTP_FLIGHT_LOG_UP,
 					    chk->whoTo->flight_size,
 					    chk->book_size,
-					    (uintptr_t) chk->whoTo,
+					    (uint32_t) (uintptr_t) chk->whoTo,
 					    chk->rec.data.TSN_seq);
 				}
 				sctp_flight_size_increase(chk);

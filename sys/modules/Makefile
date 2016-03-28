@@ -31,7 +31,6 @@ SUBDIR=	\
 	ahci \
 	${_aic} \
 	aic7xxx \
-	aio \
 	alc \
 	ale \
 	alq \
@@ -142,6 +141,7 @@ SUBDIR=	\
 	if_bridge \
 	if_disc \
 	if_edsc \
+	${_if_enc} \
 	if_epair \
 	${_if_gif} \
 	${_if_gre} \
@@ -203,7 +203,7 @@ SUBDIR=	\
 	${_linux} \
 	${_linux_common} \
 	${_linux64} \
-	${_linuxkpi} \
+	linuxkpi \
 	${_lm} \
 	lmc \
 	lpt \
@@ -221,6 +221,7 @@ SUBDIR=	\
 	malo \
 	mcd \
 	md \
+	mdio \
 	mem \
 	mfi \
 	mii \
@@ -228,6 +229,8 @@ SUBDIR=	\
 	${_mlx4} \
 	${_mlx4ib} \
 	${_mlxen} \
+	${_mlx5} \
+	${_mlx5en} \
 	${_mly} \
 	mmc \
 	mmcsd \
@@ -309,6 +312,8 @@ SUBDIR=	\
 	re \
 	reiserfs \
 	rl \
+	rtwn \
+	${_rtwnfw} \
 	${_s3} \
 	${_safe} \
 	${_sbni} \
@@ -345,6 +350,9 @@ SUBDIR=	\
 	${_syscons} \
 	sysvipc \
 	${_ti} \
+	tcp/fastpath \
+	tests/framework \
+	tests/callout_test \
 	tl \
 	tmpfs \
 	${_toecore} \
@@ -361,6 +369,8 @@ SUBDIR=	\
 	udf_iconv \
 	ufs \
 	unionfs \
+	urtwn \
+	${_urtwnfw} \
 	usb \
 	utopia \
 	${_vesa} \
@@ -401,7 +411,8 @@ _autofs=	autofs
 .endif
 
 .if ${MK_CDDL} != "no" || defined(ALL_MODULES)
-.if ${MACHINE_CPUARCH} != "arm" && ${MACHINE_CPUARCH} != "mips" && \
+.if (${MACHINE_CPUARCH} != "arm" || ${MACHINE_ARCH:Marmv6*} != "") && \
+	${MACHINE_CPUARCH} != "mips" && \
 	${MACHINE_CPUARCH} != "sparc64"
 SUBDIR+=	dtrace
 .endif
@@ -426,6 +437,7 @@ SUBDIR+=	cuse
 	defined(ALL_MODULES)
 _carp=		carp
 _toecore=	toecore
+_if_enc=	if_enc
 _if_gif=	if_gif
 _if_gre=	if_gre
 .endif
@@ -475,6 +487,8 @@ _fxp=		fxp
 _ispfw=		ispfw
 _mwlfw=		mwlfw
 _ralfw=		ralfw
+_rtwnfw=	rtwnfw
+_urtwnfw=	urtwnfw
 _sf=		sf
 _ti=		ti
 _txp=		txp
@@ -504,6 +518,11 @@ _sym=		sym
 .if ${MK_SOURCELESS_UCODE} != "no"
 _cxgb=		cxgb
 .endif
+.endif
+
+.if ${MACHINE_CPUARCH} == "aarch64"
+_em=		em
+_igb=		igb
 .endif
 
 .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
@@ -541,9 +560,6 @@ _ixv=		ixv
 _linprocfs=	linprocfs
 _linsysfs=	linsysfs
 _linux=		linux
-.if ${MK_OFED} != "no"
-_linuxkpi=	linuxkpi
-.endif
 _ndis=		ndis
 _pccard=	pccard
 .if ${MK_OFED} != "no" || defined(ALL_MODULES)
@@ -607,6 +623,11 @@ _lm=		lm
 _mlx4=		mlx4
 _mlx4ib=	mlx4ib
 _mlxen=		mlxen
+.endif
+_mlx5=		mlx5
+.if (${MK_INET_SUPPORT} != "no" && ${MK_INET6_SUPPORT} != "no") || \
+	defined(ALL_MODULES)
+_mlx5en=	mlx5en
 .endif
 _mly=		mly
 .if ${MK_OFED} != "no" || defined(ALL_MODULES)
@@ -672,7 +693,7 @@ _cp=		cp
 _elink=		elink
 _glxiic=	glxiic
 _glxsb=		glxsb
-_ibcs2=		ibcs2
+#_ibcs2=		ibcs2
 _ie=		ie
 _mse=		mse
 _ncr=		ncr

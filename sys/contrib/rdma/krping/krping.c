@@ -261,6 +261,7 @@ static int krping_cma_event_handler(struct rdma_cm_id *cma_id,
 
 	case RDMA_CM_EVENT_ROUTE_RESOLVED:
 		cb->state = ROUTE_RESOLVED;
+		cb->child_cm_id = cma_id;
 		wake_up_interruptible(&cb->sem);
 		break;
 
@@ -640,6 +641,7 @@ static int krping_setup_buffers(struct krping_cb *cb)
 			buf.size = cb->size;
 			iovbase = cb->rdma_dma_addr;
 			cb->rdma_mr = ib_reg_phys_mr(cb->pd, &buf, 1, 
+			    		     IB_ACCESS_LOCAL_WRITE|
 					     IB_ACCESS_REMOTE_READ| 
 					     IB_ACCESS_REMOTE_WRITE, 
 					     &iovbase);
@@ -675,8 +677,10 @@ static int krping_setup_buffers(struct krping_cb *cb)
 		if (cb->mem == MR || cb->mem == MW) {
 			unsigned flags = IB_ACCESS_REMOTE_READ;
 
-			if (cb->wlat || cb->rlat || cb->bw)
-				flags |= IB_ACCESS_REMOTE_WRITE;
+			if (cb->wlat || cb->rlat || cb->bw) {
+				flags |= IB_ACCESS_LOCAL_WRITE |
+				    IB_ACCESS_REMOTE_WRITE;
+			}
 
 			buf.addr = cb->start_dma_addr;
 			buf.size = cb->size;

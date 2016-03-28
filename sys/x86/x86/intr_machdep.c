@@ -197,19 +197,28 @@ int
 intr_remove_handler(void *cookie)
 {
 	struct intsrc *isrc;
-	int error;
+	int error, mtx_owned;
 
 	isrc = intr_handler_source(cookie);
 	error = intr_event_remove_handler(cookie);
 	if (error == 0) {
-		mtx_lock(&intr_table_lock);
+		/*
+		 * Recursion is needed here so PICs can remove interrupts
+		 * while resuming. It was previously not possible due to
+		 * intr_resume holding the intr_table_lock and
+		 * intr_remove_handler recursing on it.
+		 */
+		mtx_owned = mtx_owned(&intr_table_lock);
+		if (mtx_owned == 0)
+			mtx_lock(&intr_table_lock);
 		isrc->is_handlers--;
 		if (isrc->is_handlers == 0) {
 			isrc->is_pic->pic_disable_source(isrc, PIC_NO_EOI);
 			isrc->is_pic->pic_disable_intr(isrc);
 		}
 		intrcnt_updatename(isrc);
-		mtx_unlock(&intr_table_lock);
+		if (mtx_owned == 0)
+			mtx_unlock(&intr_table_lock);
 	}
 	return (error);
 }
@@ -383,6 +392,21 @@ intr_init(void *dummy __unused)
 	mtx_init(&intrcnt_lock, "intrcnt", NULL, MTX_SPIN);
 }
 SYSINIT(intr_init, SI_SUB_INTR, SI_ORDER_FIRST, intr_init, NULL);
+
+static void
+intr_init_final(void *dummy __unused)
+{
+
+	/*
+	 * Enable interrupts on the BSP after all of the interrupt
+	 * controllers are initialized.  Device interrupts are still
+	 * disabled in the interrupt controllers until interrupt
+	 * handlers are registered.  Interrupts are enabled on each AP
+	 * after their first context switch.
+	 */
+	enable_intr();
+}
+SYSINIT(intr_init_final, SI_SUB_INTR, SI_ORDER_ANY, intr_init_final, NULL);
 
 #ifndef DEV_ATPIC
 /* Initialize the two 8259A's to a known-good shutdown state. */

@@ -51,6 +51,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/callout.h>
+#include <sys/eventhandler.h>
 #include <sys/domain.h>
 #include <sys/protosw.h>
 #include <sys/rmlock.h>
@@ -1220,8 +1221,17 @@ in_pcbrele_wlocked(struct inpcb *inp)
 
 	INP_WLOCK_ASSERT(inp);
 
-	if (refcount_release(&inp->inp_refcount) == 0)
+	if (refcount_release(&inp->inp_refcount) == 0) {
+		/*
+		 * If the inpcb has been freed, let the caller know, even if
+		 * this isn't the last reference.
+		 */
+		if (inp->inp_flags2 & INP_FREED) {
+			INP_WUNLOCK(inp);
+			return (1);
+		}
 		return (0);
+	}
 
 	KASSERT(inp->inp_socket == NULL, ("%s: inp_socket != NULL", __func__));
 
@@ -1288,6 +1298,11 @@ in_pcbfree(struct inpcb *inp)
 	if (inp->inp_moptions != NULL)
 		inp_freemoptions(inp->inp_moptions);
 #endif
+	if (inp->inp_route.ro_rt) {
+		RTFREE(inp->inp_route.ro_rt);
+		inp->inp_route.ro_rt = (struct rtentry *)NULL;
+	}
+
 	inp->inp_vflag = 0;
 	inp->inp_flags2 |= INP_FREED;
 	crfree(inp->inp_cred);
@@ -2212,6 +2227,23 @@ in_pcbremlists(struct inpcb *inp)
 #ifdef PCBGROUP
 	in_pcbgroup_remove(inp);
 #endif
+}
+
+/*
+ * Check for alternatives when higher level complains
+ * about service problems.  For now, invalidate cached
+ * routing information.  If the route was created dynamically
+ * (by a redirect), time to try a default gateway again.
+ */
+void
+in_losing(struct inpcb *inp)
+{
+
+	if (inp->inp_route.ro_rt) {
+		RTFREE(inp->inp_route.ro_rt);
+		inp->inp_route.ro_rt = (struct rtentry *)NULL;
+	}
+	return;
 }
 
 /*

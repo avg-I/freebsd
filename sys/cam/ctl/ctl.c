@@ -927,6 +927,11 @@ ctl_isc_announce_mode(struct ctl_lun *lun, uint32_t initidx,
 	}
 	if (i == CTL_NUM_MODE_PAGES)
 		return;
+
+	/* Don't try to replicate pages not present on this device. */
+	if (lun->mode_pages.index[i].page_data == NULL)
+		return;
+
 	bzero(&msg.mode, sizeof(msg.mode));
 	msg.hdr.msg_type = CTL_MSG_MODE_SYNC;
 	msg.hdr.nexus.targ_port = initidx / CTL_MAX_INIT_PER_PORT;
@@ -1773,6 +1778,7 @@ ctl_ha_role_sysctl(SYSCTL_HANDLER_ARGS)
 static int
 ctl_init(void)
 {
+	struct make_dev_args args;
 	struct ctl_softc *softc;
 	void *other_pool;
 	int i, error;
@@ -1780,9 +1786,17 @@ ctl_init(void)
 	softc = control_softc = malloc(sizeof(*control_softc), M_DEVBUF,
 			       M_WAITOK | M_ZERO);
 
-	softc->dev = make_dev(&ctl_cdevsw, 0, UID_ROOT, GID_OPERATOR, 0600,
-			      "cam/ctl");
-	softc->dev->si_drv1 = softc;
+	make_dev_args_init(&args);
+	args.mda_devsw = &ctl_cdevsw;
+	args.mda_uid = UID_ROOT;
+	args.mda_gid = GID_OPERATOR;
+	args.mda_mode = 0600;
+	args.mda_si_drv1 = softc;
+	error = make_dev_s(&args, &softc->dev, "cam/ctl");
+	if (error != 0) {
+		free(control_softc, M_DEVBUF);
+		return (error);
+	}
 
 	sysctl_ctx_init(&softc->sysctl_ctx);
 	softc->sysctl_tree = SYSCTL_ADD_NODE(&softc->sysctl_ctx,
@@ -1814,13 +1828,13 @@ ctl_init(void)
 	SYSCTL_ADD_INT(&softc->sysctl_ctx, SYSCTL_CHILDREN(softc->sysctl_tree),
 	    OID_AUTO, "ha_id", CTLFLAG_RDTUN, &softc->ha_id, 0,
 	    "HA head ID (0 - no HA)");
-	if (softc->ha_id == 0 || softc->ha_id > NUM_TARGET_PORT_GROUPS) {
+	if (softc->ha_id == 0 || softc->ha_id > NUM_HA_SHELVES) {
 		softc->flags |= CTL_FLAG_ACTIVE_SHELF;
 		softc->is_single = 1;
 		softc->port_cnt = CTL_MAX_PORTS;
 		softc->port_min = 0;
 	} else {
-		softc->port_cnt = CTL_MAX_PORTS / NUM_TARGET_PORT_GROUPS;
+		softc->port_cnt = CTL_MAX_PORTS / NUM_HA_SHELVES;
 		softc->port_min = (softc->ha_id - 1) * softc->port_cnt;
 	}
 	softc->port_max = softc->port_min + softc->port_cnt;
@@ -3531,6 +3545,67 @@ ctl_lun_map_to_port(struct ctl_port *port, uint32_t lun_id)
 			return (i);
 	}
 	return (UINT32_MAX);
+}
+
+uint32_t
+ctl_decode_lun(uint64_t encoded)
+{
+	uint8_t lun[8];
+	uint32_t result = 0xffffffff;
+
+	be64enc(lun, encoded);
+	switch (lun[0] & RPL_LUNDATA_ATYP_MASK) {
+	case RPL_LUNDATA_ATYP_PERIPH:
+		if ((lun[0] & 0x3f) == 0 && lun[2] == 0 && lun[3] == 0 &&
+		    lun[4] == 0 && lun[5] == 0 && lun[6] == 0 && lun[7] == 0)
+			result = lun[1];
+		break;
+	case RPL_LUNDATA_ATYP_FLAT:
+		if (lun[2] == 0 && lun[3] == 0 && lun[4] == 0 && lun[5] == 0 &&
+		    lun[6] == 0 && lun[7] == 0)
+			result = ((lun[0] & 0x3f) << 8) + lun[1];
+		break;
+	case RPL_LUNDATA_ATYP_EXTLUN:
+		switch (lun[0] & RPL_LUNDATA_EXT_EAM_MASK) {
+		case 0x02:
+			switch (lun[0] & RPL_LUNDATA_EXT_LEN_MASK) {
+			case 0x00:
+				result = lun[1];
+				break;
+			case 0x10:
+				result = (lun[1] << 16) + (lun[2] << 8) +
+				    lun[3];
+				break;
+			case 0x20:
+				if (lun[1] == 0 && lun[6] == 0 && lun[7] == 0)
+					result = (lun[2] << 24) +
+					    (lun[3] << 16) + (lun[4] << 8) +
+					    lun[5];
+				break;
+			}
+			break;
+		case RPL_LUNDATA_EXT_EAM_NOT_SPEC:
+			result = 0xffffffff;
+			break;
+		}
+		break;
+	}
+	return (result);
+}
+
+uint64_t
+ctl_encode_lun(uint32_t decoded)
+{
+	uint64_t l = decoded;
+
+	if (l <= 0xff)
+		return (((uint64_t)RPL_LUNDATA_ATYP_PERIPH << 56) | (l << 48));
+	if (l <= 0x3fff)
+		return (((uint64_t)RPL_LUNDATA_ATYP_FLAT << 56) | (l << 48));
+	if (l <= 0xffffff)
+		return (((uint64_t)(RPL_LUNDATA_ATYP_EXTLUN | 0x12) << 56) |
+		    (l << 32));
+	return ((((uint64_t)RPL_LUNDATA_ATYP_EXTLUN | 0x22) << 56) | (l << 16));
 }
 
 static struct ctl_port *
@@ -5619,7 +5694,7 @@ ctl_write_same(struct ctl_scsiio *ctsio)
 	 */
 	if ((byte2 & SWS_NDOB) == 0 &&
 	    (ctsio->io_hdr.flags & CTL_FLAG_ALLOCATED) == 0) {
-		ctsio->kern_data_ptr = malloc(len, M_CTL, M_WAITOK);;
+		ctsio->kern_data_ptr = malloc(len, M_CTL, M_WAITOK);
 		ctsio->kern_data_len = len;
 		ctsio->kern_total_len = len;
 		ctsio->kern_data_resid = 0;
@@ -5667,7 +5742,7 @@ ctl_unmap(struct ctl_scsiio *ctsio)
 	 * malloc it and tell the caller the data buffer is here.
 	 */
 	if ((ctsio->io_hdr.flags & CTL_FLAG_ALLOCATED) == 0) {
-		ctsio->kern_data_ptr = malloc(len, M_CTL, M_WAITOK);;
+		ctsio->kern_data_ptr = malloc(len, M_CTL, M_WAITOK);
 		ctsio->kern_data_len = len;
 		ctsio->kern_total_len = len;
 		ctsio->kern_data_resid = 0;
@@ -6802,6 +6877,8 @@ ctl_log_sense(struct ctl_scsiio *ctsio)
 
 	header = (struct scsi_log_header *)ctsio->kern_data_ptr;
 	header->page = page_index->page_code;
+	if (page_index->page_code == SLS_LOGICAL_BLOCK_PROVISIONING)
+		header->page |= SL_DS;
 	if (page_index->subpage) {
 		header->page |= SL_SPF;
 		header->subpage = page_index->subpage;
@@ -7071,8 +7148,8 @@ ctl_report_tagret_port_groups(struct ctl_scsiio *ctsio)
 {
 	struct scsi_maintenance_in *cdb;
 	int retval;
-	int alloc_len, ext, total_len = 0, g, pc, pg, gs, os;
-	int num_target_port_groups, num_target_ports;
+	int alloc_len, ext, total_len = 0, g, pc, pg, ts, os;
+	int num_ha_groups, num_target_ports, shared_group;
 	struct ctl_lun *lun;
 	struct ctl_softc *softc;
 	struct ctl_port *port;
@@ -7106,11 +7183,8 @@ ctl_report_tagret_port_groups(struct ctl_scsiio *ctsio)
 		return(retval);
 	}
 
-	if (softc->is_single)
-		num_target_port_groups = 1;
-	else
-		num_target_port_groups = NUM_TARGET_PORT_GROUPS;
 	num_target_ports = 0;
+	shared_group = (softc->is_single != 0);
 	mtx_lock(&softc->ctl_lock);
 	STAILQ_FOREACH(port, &softc->port_list, links) {
 		if ((port->status & CTL_PORT_STATUS_ONLINE) == 0)
@@ -7118,15 +7192,18 @@ ctl_report_tagret_port_groups(struct ctl_scsiio *ctsio)
 		if (ctl_lun_map_to_port(port, lun->lun) >= CTL_MAX_LUNS)
 			continue;
 		num_target_ports++;
+		if (port->status & CTL_PORT_STATUS_HA_SHARED)
+			shared_group = 1;
 	}
 	mtx_unlock(&softc->ctl_lock);
+	num_ha_groups = (softc->is_single) ? 0 : NUM_HA_SHELVES;
 
 	if (ext)
 		total_len = sizeof(struct scsi_target_group_data_extended);
 	else
 		total_len = sizeof(struct scsi_target_group_data);
 	total_len += sizeof(struct scsi_target_port_group_descriptor) *
-		num_target_port_groups +
+		(shared_group + num_ha_groups) +
 	    sizeof(struct scsi_target_port_descriptor) * num_target_ports;
 
 	alloc_len = scsi_4btoul(cdb->length);
@@ -7163,24 +7240,62 @@ ctl_report_tagret_port_groups(struct ctl_scsiio *ctsio)
 
 	mtx_lock(&softc->ctl_lock);
 	pg = softc->port_min / softc->port_cnt;
-	if (softc->ha_link == CTL_HA_LINK_OFFLINE)
-		gs = TPG_ASYMMETRIC_ACCESS_UNAVAILABLE;
-	else if (softc->ha_link == CTL_HA_LINK_UNKNOWN)
-		gs = TPG_ASYMMETRIC_ACCESS_TRANSITIONING;
-	else if (softc->ha_mode == CTL_HA_MODE_ACT_STBY)
-		gs = TPG_ASYMMETRIC_ACCESS_STANDBY;
-	else
-		gs = TPG_ASYMMETRIC_ACCESS_NONOPTIMIZED;
-	if (lun->flags & CTL_LUN_PRIMARY_SC) {
-		os = gs;
-		gs = TPG_ASYMMETRIC_ACCESS_OPTIMIZED;
-	} else
-		os = TPG_ASYMMETRIC_ACCESS_OPTIMIZED;
-	for (g = 0; g < num_target_port_groups; g++) {
-		tpg_desc->pref_state = (g == pg) ? gs : os;
+	if (lun->flags & (CTL_LUN_PRIMARY_SC | CTL_LUN_PEER_SC_PRIMARY)) {
+		/* Some shelf is known to be primary. */
+		if (softc->ha_link == CTL_HA_LINK_OFFLINE)
+			os = TPG_ASYMMETRIC_ACCESS_UNAVAILABLE;
+		else if (softc->ha_link == CTL_HA_LINK_UNKNOWN)
+			os = TPG_ASYMMETRIC_ACCESS_TRANSITIONING;
+		else if (softc->ha_mode == CTL_HA_MODE_ACT_STBY)
+			os = TPG_ASYMMETRIC_ACCESS_STANDBY;
+		else
+			os = TPG_ASYMMETRIC_ACCESS_NONOPTIMIZED;
+		if (lun->flags & CTL_LUN_PRIMARY_SC) {
+			ts = TPG_ASYMMETRIC_ACCESS_OPTIMIZED;
+		} else {
+			ts = os;
+			os = TPG_ASYMMETRIC_ACCESS_OPTIMIZED;
+		}
+	} else {
+		/* No known primary shelf. */
+		if (softc->ha_link == CTL_HA_LINK_OFFLINE) {
+			ts = TPG_ASYMMETRIC_ACCESS_UNAVAILABLE;
+			os = TPG_ASYMMETRIC_ACCESS_OPTIMIZED;
+		} else if (softc->ha_link == CTL_HA_LINK_UNKNOWN) {
+			ts = TPG_ASYMMETRIC_ACCESS_TRANSITIONING;
+			os = TPG_ASYMMETRIC_ACCESS_OPTIMIZED;
+		} else {
+			ts = os = TPG_ASYMMETRIC_ACCESS_TRANSITIONING;
+		}
+	}
+	if (shared_group) {
+		tpg_desc->pref_state = ts;
 		tpg_desc->support = TPG_AO_SUP | TPG_AN_SUP | TPG_S_SUP |
 		    TPG_U_SUP | TPG_T_SUP;
-		scsi_ulto2b(g + 1, tpg_desc->target_port_group);
+		scsi_ulto2b(1, tpg_desc->target_port_group);
+		tpg_desc->status = TPG_IMPLICIT;
+		pc = 0;
+		STAILQ_FOREACH(port, &softc->port_list, links) {
+			if ((port->status & CTL_PORT_STATUS_ONLINE) == 0)
+				continue;
+			if (!softc->is_single &&
+			    (port->status & CTL_PORT_STATUS_HA_SHARED) == 0)
+				continue;
+			if (ctl_lun_map_to_port(port, lun->lun) >= CTL_MAX_LUNS)
+				continue;
+			scsi_ulto2b(port->targ_port, tpg_desc->descriptors[pc].
+			    relative_target_port_identifier);
+			pc++;
+		}
+		tpg_desc->target_port_count = pc;
+		tpg_desc = (struct scsi_target_port_group_descriptor *)
+		    &tpg_desc->descriptors[pc];
+	}
+	for (g = 0; g < num_ha_groups; g++) {
+		tpg_desc->pref_state = (g == pg) ? ts : os;
+		tpg_desc->support = TPG_AO_SUP | TPG_AN_SUP | TPG_S_SUP |
+		    TPG_U_SUP | TPG_T_SUP;
+		scsi_ulto2b(2 + g, tpg_desc->target_port_group);
 		tpg_desc->status = TPG_IMPLICIT;
 		pc = 0;
 		STAILQ_FOREACH(port, &softc->port_list, links) {
@@ -7188,6 +7303,8 @@ ctl_report_tagret_port_groups(struct ctl_scsiio *ctsio)
 			    port->targ_port >= (g + 1) * softc->port_cnt)
 				continue;
 			if ((port->status & CTL_PORT_STATUS_ONLINE) == 0)
+				continue;
+			if (port->status & CTL_PORT_STATUS_HA_SHARED)
 				continue;
 			if (ctl_lun_map_to_port(port, lun->lun) >= CTL_MAX_LUNS)
 				continue;
@@ -9056,36 +9173,9 @@ ctl_report_luns(struct ctl_scsiio *ctsio)
 		if (lun == NULL)
 			continue;
 
-		if (targ_lun_id <= 0xff) {
-			/*
-			 * Peripheral addressing method, bus number 0.
-			 */
-			lun_data->luns[num_filled].lundata[0] =
-				RPL_LUNDATA_ATYP_PERIPH;
-			lun_data->luns[num_filled].lundata[1] = targ_lun_id;
-			num_filled++;
-		} else if (targ_lun_id <= 0x3fff) {
-			/*
-			 * Flat addressing method.
-			 */
-			lun_data->luns[num_filled].lundata[0] =
-				RPL_LUNDATA_ATYP_FLAT | (targ_lun_id >> 8);
-			lun_data->luns[num_filled].lundata[1] =
-				(targ_lun_id & 0xff);
-			num_filled++;
-		} else if (targ_lun_id <= 0xffffff) {
-			/*
-			 * Extended flat addressing method.
-			 */
-			lun_data->luns[num_filled].lundata[0] =
-			    RPL_LUNDATA_ATYP_EXTLUN | 0x12;
-			scsi_ulto3b(targ_lun_id,
-			    &lun_data->luns[num_filled].lundata[1]);
-			num_filled++;
-		} else {
-			printf("ctl_report_luns: bogus LUN number %jd, "
-			       "skipping\n", (intmax_t)targ_lun_id);
-		}
+		be64enc(lun_data->luns[num_filled++].lundata,
+		    ctl_encode_lun(targ_lun_id));
+
 		/*
 		 * According to SPC-3, rev 14 section 6.21:
 		 *
@@ -9587,7 +9677,7 @@ ctl_inquiry_evpd_devid(struct ctl_scsiio *ctsio, int alloc_len)
 	struct ctl_softc *softc;
 	struct ctl_lun *lun;
 	struct ctl_port *port;
-	int data_len;
+	int data_len, g;
 	uint8_t proto;
 
 	softc = control_softc;
@@ -9681,8 +9771,12 @@ ctl_inquiry_evpd_devid(struct ctl_scsiio *ctsio, int alloc_len)
 	desc->id_type = SVPD_ID_PIV | SVPD_ID_ASSOC_PORT |
 	    SVPD_ID_TYPE_TPORTGRP;
 	desc->length = 4;
-	scsi_ulto2b(ctsio->io_hdr.nexus.targ_port / softc->port_cnt + 1,
-	    &desc->identifier[2]);
+	if (softc->is_single ||
+	    (port && port->status & CTL_PORT_STATUS_HA_SHARED))
+		g = 1;
+	else
+		g = 2 + ctsio->io_hdr.nexus.targ_port / softc->port_cnt;
+	scsi_ulto2b(g, &desc->identifier[2]);
 	desc = (struct scsi_vpd_id_descriptor *)(&desc->identifier[0] +
 	    sizeof(struct scsi_vpd_id_trgt_port_grp_id));
 
@@ -11003,7 +11097,17 @@ ctl_check_for_blockage(struct ctl_lun *lun, union ctl_io *pending_io,
 		return (CTL_ACTION_BLOCK);
 
 	pending_entry = ctl_get_cmd_entry(&pending_io->scsiio, NULL);
+	KASSERT(pending_entry->seridx < CTL_SERIDX_COUNT,
+	    ("%s: Invalid seridx %d for pending CDB %02x %02x @ %p",
+	     __func__, pending_entry->seridx, pending_io->scsiio.cdb[0],
+	     pending_io->scsiio.cdb[1], pending_io));
 	ooa_entry = ctl_get_cmd_entry(&ooa_io->scsiio, NULL);
+	if (ooa_entry->seridx == CTL_SERIDX_INVLD)
+		return (CTL_ACTION_PASS); /* Unsupported command in OOA queue */
+	KASSERT(ooa_entry->seridx < CTL_SERIDX_COUNT,
+	    ("%s: Invalid seridx %d for ooa CDB %02x %02x @ %p",
+	     __func__, ooa_entry->seridx, ooa_io->scsiio.cdb[0],
+	     ooa_io->scsiio.cdb[1], ooa_io));
 
 	serialize_row = ctl_serialize_table[ooa_entry->seridx];
 

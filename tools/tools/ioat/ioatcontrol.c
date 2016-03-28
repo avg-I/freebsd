@@ -48,9 +48,52 @@ static void
 usage(void)
 {
 
-	printf("Usage: %s [-V] <channel #> <txns> [<bufsize> "
+	printf("Usage: %s [-E|-f|-m] OPTIONS <channel #> <txns> [<bufsize> "
 	    "[<chain-len> [duration]]]\n", getprogname());
+	printf("       %s -r [-v] OPTIONS <channel #> <addr> [<bufsize>]\n\n",
+	    getprogname());
+	printf("       OPTIONS:\n");
+	printf("           -c <period> - Enable interrupt coalescing (us)\n");
+	printf("           -V          - Enable verification\n");
+	printf("           -z          - Zero device stats before test\n");
 	exit(EX_USAGE);
+}
+
+static void
+main_raw(struct ioat_test *t, int argc, char **argv)
+{
+	int fd;
+
+	/* Raw DMA defaults */
+	t->testkind = IOAT_TEST_RAW_DMA;
+	t->transactions = 1;
+	t->chain_depth = 1;
+	t->buffer_size = 4 * 1024;
+
+	t->raw_target = strtoull(argv[1], NULL, 0);
+	if (t->raw_target == 0) {
+		printf("Target shoudln't be NULL\n");
+		exit(EX_USAGE);
+	}
+
+	if (argc >= 3) {
+		t->buffer_size = atoi(argv[2]);
+		if (t->buffer_size == 0) {
+			printf("Buffer size must be greater than zero\n");
+			exit(EX_USAGE);
+		}
+	}
+
+	fd = open("/dev/ioat_test", O_RDWR);
+	if (fd < 0) {
+		printf("Cannot open /dev/ioat_test\n");
+		exit(EX_UNAVAILABLE);
+	}
+
+	(void)ioctl(fd, IOAT_DMATEST, t);
+	close(fd);
+
+	exit(prettyprint(t));
 }
 
 int
@@ -58,11 +101,44 @@ main(int argc, char **argv)
 {
 	struct ioat_test t;
 	int fd, ch;
+	bool fflag, rflag, Eflag, mflag;
+	unsigned modeflags;
 
-	while ((ch = getopt(argc, argv, "V")) != -1) {
+	fflag = rflag = Eflag = mflag = false;
+	modeflags = 0;
+
+	while ((ch = getopt(argc, argv, "c:EfmrvVwz")) != -1) {
 		switch (ch) {
+		case 'c':
+			t.coalesce_period = atoi(optarg);
+			break;
+		case 'E':
+			Eflag = true;
+			modeflags++;
+			break;
+		case 'f':
+			fflag = true;
+			modeflags++;
+			break;
+		case 'm':
+			mflag = true;
+			modeflags++;
+			break;
+		case 'r':
+			rflag = true;
+			modeflags++;
+			break;
+		case 'v':
+			t.raw_is_virtual = true;
+			break;
 		case 'V':
 			t.verify = true;
+			break;
+		case 'w':
+			t.raw_write = true;
+			break;
+		case 'z':
+			t.zero_stats = true;
 			break;
 		default:
 			usage();
@@ -74,15 +150,34 @@ main(int argc, char **argv)
 	if (argc < 2)
 		usage();
 
+	if (modeflags > 1) {
+		printf("Invalid: Cannot use >1 mode flag (-E, -f, -m, or -r)\n");
+		usage();
+	}
+
 	/* Defaults for optional args */
 	t.buffer_size = 256 * 1024;
 	t.chain_depth = 2;
 	t.duration = 0;
+	t.testkind = IOAT_TEST_DMA;
+
+	if (fflag)
+		t.testkind = IOAT_TEST_FILL;
+	else if (Eflag) {
+		t.testkind = IOAT_TEST_DMA_8K;
+		t.buffer_size = 8 * 1024;
+	} else if (mflag)
+		t.testkind = IOAT_TEST_MEMCPY;
 
 	t.channel_index = atoi(argv[0]);
 	if (t.channel_index > 8) {
 		printf("Channel number must be between 0 and 7.\n");
 		return (EX_USAGE);
+	}
+
+	if (rflag) {
+		main_raw(&t, argc, argv);
+		return (EX_OK);
 	}
 
 	t.transactions = atoi(argv[1]);
