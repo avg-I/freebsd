@@ -103,7 +103,9 @@
 
 # This is included so CC is set to ccache for -V, and COMPILER_TYPE/VERSION
 # can be cached for sub-makes.
+.if ${MAKE_VERSION} >= 20140620
 .include <bsd.compiler.mk>
+.endif
 
 # Note: we use this awkward construct to be compatible with FreeBSD's
 # old make used in 10.0 and 9.2 and earlier.
@@ -124,10 +126,12 @@ TGTS=	all all-man buildenv buildenvvars buildkernel buildworld \
 	installworld kernel-toolchain libraries lint maninstall \
 	obj objlink rerelease showconfig tags toolchain update \
 	_worldtmp _legacy _bootstrap-tools _cleanobj _obj \
-	_build-tools _cross-tools _includes _libraries _depend \
-	build32 distribute32 install32 build32 distribute32 install32 \
+	_build-tools _cross-tools _includes _libraries \
+	build32 distribute32 install32 buildsoft distributesoft installsoft \
 	builddtb xdev xdev-build xdev-install \
-	xdev-links native-xtools installconfig \
+	xdev-links native-xtools stageworld stagekernel stage-packages \
+	create-world-packages create-kernel-packages create-packages \
+	packages installconfig real-packages sign-packages package-pkg
 
 TGTS+=	${SUBDIR_TARGETS}
 
@@ -160,17 +164,26 @@ _MAKEOBJDIRPREFIX!= /usr/bin/env -i PATH=${PATH} MK_AUTO_OBJ=no ${MAKE} \
 # We cannot blindly use a make which may not be the one we want
 # so be exlicit - until all choice is removed.
 WANT_MAKE=	bmake
+.if !empty(.MAKE.MODE:Mmeta)
+# 20160604 - support missing-meta,missing-filemon and performance improvements
+WANT_MAKE_VERSION= 20160604
+.else
 # 20160220 - support .dinclude for FAST_DEPEND.
 WANT_MAKE_VERSION= 20160220
+.endif
 MYMAKE=		${MAKEOBJDIRPREFIX}${.CURDIR}/make.${MACHINE}/${WANT_MAKE}
 .if defined(.PARSEDIR)
 HAVE_MAKE=	bmake
 .else
 HAVE_MAKE=	fmake
 .endif
+.if ${HAVE_MAKE} != ${WANT_MAKE} || \
+    (defined(WANT_MAKE_VERSION) && ${MAKE_VERSION} < ${WANT_MAKE_VERSION})
+NEED_MAKE_UPGRADE= t
+.endif
 .if exists(${MYMAKE})
 SUB_MAKE:= ${MYMAKE} -m ${.CURDIR}/share/mk
-.elif ${WANT_MAKE} != ${HAVE_MAKE}
+.elif defined(NEED_MAKE_UPGRADE)
 # It may not exist yet but we may cause it to.
 # In the case of fmake, upgrade_checks may cause a newer version to be built.
 SUB_MAKE= `test -x ${MYMAKE} && echo ${MYMAKE} || echo ${MAKE}` \
@@ -181,12 +194,21 @@ SUB_MAKE= ${MAKE} -m ${.CURDIR}/share/mk
 
 _MAKE=	PATH=${PATH} ${SUB_MAKE} -f Makefile.inc1 TARGET=${_TARGET} TARGET_ARCH=${_TARGET_ARCH}
 
+# Must disable META_MODE when installing to avoid missing anything.  The
+# main problem is that buildworld will create cookies for install targets
+# since they are being installed into WORLDTMP.  This avoids unneeded and
+# redundant restaging but is dangerous for user install targets.
+.if make(distrib*) || make(*install*)
+_MAKE+=	MK_META_MODE=no
+.unexport META_MODE
+.endif
+
 # Guess machine architecture from machine type, and vice versa.
 .if !defined(TARGET_ARCH) && defined(TARGET)
 _TARGET_ARCH=	${TARGET:S/pc98/i386/:S/arm64/aarch64/}
 .elif !defined(TARGET) && defined(TARGET_ARCH) && \
     ${TARGET_ARCH} != ${MACHINE_ARCH}
-_TARGET=		${TARGET_ARCH:C/mips(n32|64)?(el)?/mips/:C/arm(v6)?(eb|hf)?/arm/:C/aarch64/arm64/:C/powerpc64/powerpc/:C/riscv64/riscv/}
+_TARGET=		${TARGET_ARCH:C/mips(n32|64)?(el)?/mips/:C/arm(v6)?(eb)?/arm/:C/aarch64/arm64/:C/powerpc64/powerpc/:C/riscv64/riscv/}
 .endif
 .if defined(TARGET) && !defined(_TARGET)
 _TARGET=${TARGET}
@@ -302,8 +324,7 @@ kernel: buildkernel installkernel
 # for building the world.
 #
 upgrade_checks:
-.if ${HAVE_MAKE} != ${WANT_MAKE} || \
-    (defined(WANT_MAKE_VERSION) && ${MAKE_VERSION} < ${WANT_MAKE_VERSION})
+.if defined(NEED_MAKE_UPGRADE)
 	@${_+_}(cd ${.CURDIR} && ${MAKE} ${WANT_MAKE:S,^f,,})
 .endif
 
@@ -363,7 +384,7 @@ worlds:
 .if make(universe) || make(universe_kernels) || make(tinderbox) || make(targets)
 TARGETS?=amd64 arm arm64 i386 mips pc98 powerpc sparc64
 _UNIVERSE_TARGETS=	${TARGETS}
-TARGET_ARCHES_arm?=	arm armeb armv6 armv6hf
+TARGET_ARCHES_arm?=	arm armeb armv6
 TARGET_ARCHES_arm64?=	aarch64
 TARGET_ARCHES_mips?=	mipsel mips mips64el mips64 mipsn32
 TARGET_ARCHES_powerpc?=	powerpc powerpc64
@@ -406,7 +427,7 @@ MAKEFAIL=cat
 
 universe_prologue:  upgrade_checks
 universe: universe_prologue
-universe_prologue:
+universe_prologue: .PHONY
 	@echo "--------------------------------------------------------------"
 	@echo ">>> make universe started on ${STARTTIME}"
 	@echo "--------------------------------------------------------------"
@@ -492,7 +513,7 @@ universe_kernconf_${TARGET}_${kernel}: .MAKE
 	    "check _.${TARGET}.${kernel} for details"| ${MAKEFAIL}))
 .endfor
 universe: universe_epilogue
-universe_epilogue:
+universe_epilogue: .PHONY
 	@echo "--------------------------------------------------------------"
 	@echo ">>> make universe completed on `LC_ALL=C date`"
 	@echo "                      (started ${STARTTIME})"

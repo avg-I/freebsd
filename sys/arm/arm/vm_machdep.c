@@ -57,7 +57,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/sysent.h>
 #include <sys/unistd.h>
 
-#include <machine/acle-compat.h>
 #include <machine/cpu.h>
 #include <machine/frame.h>
 #include <machine/pcb.h>
@@ -76,7 +75,6 @@ __FBSDID("$FreeBSD$");
 #include <vm/uma.h>
 #include <vm/uma_int.h>
 
-#include <machine/acle-compat.h>
 #include <machine/md_var.h>
 #include <machine/vfp.h>
 
@@ -148,7 +146,7 @@ cpu_fork(register struct thread *td1, register struct proc *p2,
 
 	/* Setup to release spin count in fork_exit(). */
 	td2->td_md.md_spinlock_count = 1;
-	td2->td_md.md_saved_cspr = PSR_SVC32_MODE;;
+	td2->td_md.md_saved_cspr = PSR_SVC32_MODE;
 #if __ARM_ARCH >= 6
 	td2->td_md.md_tp = td1->td_md.md_tp;
 #else
