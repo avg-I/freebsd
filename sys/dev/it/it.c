@@ -276,7 +276,18 @@ it_generic_stemp(struct it_softc *sc, struct ksensor *sensors)
 {
 	int i, sdata;
 
+	sdata = it_readreg(sc, ITD_TEMPENABLE);
 	for (i = 0; i < 3; i++) {
+		/* TMPIN can be enabled either in resistor or diode mode. */
+		if ((sdata & (1 << i)) != 0 ||
+		    (sdata & (1 << (i + 3))) != 0)
+			sensors[i].flags &= ~SENSOR_FINVALID;
+		else
+			sensors[i].flags |= SENSOR_FINVALID;
+	}
+	for (i = 0; i < 3; i++) {
+		if ((sensors[i].flags & SENSOR_FINVALID) != 0)
+			continue;
 		sdata = it_readreg(sc, ITD_SENSORTEMPBASE + i);
 		/* Convert temperature to micro-Kelvins. */
 		sensors[i].value = sdata * 1000000 + 273150000;
