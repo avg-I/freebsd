@@ -278,7 +278,7 @@ it_generic_stemp(struct it_softc *sc, struct ksensor *sensors)
 
 	for (i = 0; i < 3; i++) {
 		sdata = it_readreg(sc, ITD_SENSORTEMPBASE + i);
-		/* Convert temperature to Fahrenheit degres */
+		/* Convert temperature to micro-Kelvins. */
 		sensors[i].value = sdata * 1000000 + 273150000;
 		if (sdata == 0x80)
 			sensors[i].flags |= SENSOR_FINVALID;
@@ -293,11 +293,11 @@ it_generic_svolt(struct it_softc *sc, struct ksensor *sensors)
 	for (i = 0; i < 9; i++) {
 		sdata = it_readreg(sc, ITD_SENSORVOLTBASE + i);
 		DPRINTF(("sdata[volt%d] 0x%x\n", i, sdata));
-		/* voltage returned as (mV >> 4) */
-		sensors[i].value = (sdata << 4);
+		/* each step is 16mV */
+		sensors[i].value = sdata * 16;
 		/* these two values are negative and formula is different */
 		if (i == 5 || i == 6)
-			sensors[i].value = ((sdata << 4) - IT_VREF);
+			sensors[i].value -= IT_VREF;
 		/* rfact is (factor * 10^4) */
 		sensors[i].value *= it_vrfact[i];
 		/* division by 10 gets us back to uVDC */
