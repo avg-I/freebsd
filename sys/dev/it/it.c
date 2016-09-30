@@ -291,8 +291,6 @@ it_generic_stemp(struct it_softc *sc, struct ksensor *sensors)
 		sdata = it_readreg(sc, ITD_SENSORTEMPBASE + i);
 		/* Convert temperature to micro-Kelvins. */
 		sensors[i].value = sdata * 1000000 + 273150000;
-		if (sdata == 0x80)
-			sensors[i].flags |= SENSOR_FINVALID;
 	}
 }
 
