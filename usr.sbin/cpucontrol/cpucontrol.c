@@ -91,6 +91,7 @@ static struct ucode_handler {
 	ucode_update_t *update;
 } handlers[] = {
 	{ intel_probe, intel_update },
+	{ amd10h_probe, amd10h_update },
 	{ amd_probe, amd_update },
 	{ via_probe, via_update },
 };
@@ -481,5 +482,5 @@ main(int argc, char *argv[])
 			usage();	/* Only one command can be selected. */
 	}
 	SLIST_FREE(&datadirs, next, free);
-	return (error);
+	return (error == 0 ? 0 : 1);
 }

@@ -198,7 +198,7 @@ auth_check_secret_length(struct auth *auth)
 			    auth->a_auth_group->ag_name);
 		else
 			log_warnx("secret for user \"%s\", target \"%s\", "
-			    "is too short; it should be at least 16 characters "
+			    "is too short; it should be at least 12 characters "
 			    "long", auth->a_user,
 			    auth->a_auth_group->ag_target->t_name);
 	}
@@ -227,7 +227,7 @@ auth_check_secret_length(struct auth *auth)
 			else
 				log_warnx("mutual secret for user \"%s\", "
 				    "target \"%s\", is too short; it should be "
-				    "at least 16 characters long",
+				    "at least 12 characters long",
 				    auth->a_user,
 				    auth->a_auth_group->ag_target->t_name);
 		}
@@ -401,8 +401,9 @@ auth_portal_new(struct auth_group *ag, const char *portal)
 	return (ap);
 
 error:
+	free(str);
 	free(ap);
-	log_errx(1, "Incorrect initiator portal '%s'", portal);
+	log_warnx("incorrect initiator portal \"%s\"", portal);
 	return (NULL);
 }
 
@@ -675,8 +676,10 @@ parse_addr_port(char *arg, const char *def_port, struct addrinfo **ai)
 		 */
 		arg++;
 		addr = strsep(&arg, "]");
-		if (arg == NULL)
+		if (arg == NULL) {
+			free(str);
 			return (1);
+		}
 		if (arg[0] == '\0') {
 			port = def_port;
 		} else if (arg[0] == ':') {
@@ -1578,8 +1581,9 @@ connection_new(struct portal *portal, int fd, const char *host,
 	/*
 	 * Default values, from RFC 3720, section 12.
 	 */
-	conn->conn_max_data_segment_length = 8192;
+	conn->conn_max_recv_data_segment_length = 8192;
 	conn->conn_max_burst_length = 262144;
+	conn->conn_first_burst_length = 65536;
 	conn->conn_immediate_data = true;
 
 	return (conn);

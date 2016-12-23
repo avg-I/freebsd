@@ -559,7 +559,8 @@ archive_wstring_append_from_mbs_in_codepage(struct archive_wstring *dest,
 			}
 			if (count == 0 && length != 0)
 				ret = -1;
-		} while (0);
+			break;
+		} while (1);
 	}
 	dest->length += count;
 	dest->s[dest->length] = L'\0';
@@ -1991,7 +1992,7 @@ archive_strncat_l(struct archive_string *as, const void *_p, size_t n,
 #if HAVE_ICONV
 
 /*
- * Return -1 if conversion failes.
+ * Return -1 if conversion fails.
  */
 static int
 iconv_strncat_in_locale(struct archive_string *as, const void *_p,
@@ -2093,7 +2094,7 @@ iconv_strncat_in_locale(struct archive_string *as, const void *_p,
 
 /*
  * Translate a string from a some CodePage to an another CodePage by
- * Windows APIs, and copy the result. Return -1 if conversion failes.
+ * Windows APIs, and copy the result. Return -1 if conversion fails.
  */
 static int
 strncat_in_codepage(struct archive_string *as,
@@ -2297,7 +2298,7 @@ _utf8_to_unicode(uint32_t *pwc, const char *s, size_t n)
 		return (0); /* Standard:  return 0 for end-of-string. */
 	cnt = utf8_count[ch];
 
-	/* Invalide sequence or there are not plenty bytes. */
+	/* Invalid sequence or there are not plenty bytes. */
 	if ((int)n < cnt) {
 		cnt = (int)n;
 		for (i = 1; i < cnt; i++) {
@@ -2378,7 +2379,7 @@ _utf8_to_unicode(uint32_t *pwc, const char *s, size_t n)
 		goto invalid_sequence;
 	}
 
-	/* The code point larger than 0x10FFFF is not leagal
+	/* The code point larger than 0x10FFFF is not legal
 	 * Unicode values. */
 	if (wc > UNICODE_MAX)
 		goto invalid_sequence;
@@ -2396,7 +2397,7 @@ utf8_to_unicode(uint32_t *pwc, const char *s, size_t n)
 	int cnt;
 
 	cnt = _utf8_to_unicode(pwc, s, n);
-	/* Any of Surrogate pair is not leagal Unicode values. */
+	/* Any of Surrogate pair is not legal Unicode values. */
 	if (cnt == 3 && IS_SURROGATE_PAIR_LA(*pwc))
 		return (-3);
 	return (cnt);
@@ -2457,7 +2458,7 @@ invalid_sequence:
 /*
  * Convert a Unicode code point to a single UTF-8 sequence.
  *
- * NOTE:This function does not check if the Unicode is leagal or not.
+ * NOTE:This function does not check if the Unicode is legal or not.
  * Please you definitely check it before calling this.
  */
 static size_t
@@ -2553,7 +2554,7 @@ utf16_to_unicode(uint32_t *pwc, const char *s, size_t n, int be)
 	 * Surrogate pair values(0xd800 through 0xdfff) are only
 	 * used by UTF-16, so, after above culculation, the code
 	 * must not be surrogate values, and Unicode has no codes
-	 * larger than 0x10ffff. Thus, those are not leagal Unicode
+	 * larger than 0x10ffff. Thus, those are not legal Unicode
 	 * values.
 	 */
 	if (IS_SURROGATE_PAIR_LA(uc) || uc > UNICODE_MAX) {
@@ -3473,7 +3474,7 @@ strncat_from_utf8_libarchive2(struct archive_string *as,
 
 /*
  * Convert a UTF-16BE/LE string to current locale and copy the result.
- * Return -1 if conversion failes.
+ * Return -1 if conversion fails.
  */
 static int
 win_strncat_from_utf16(struct archive_string *as, const void *_p, size_t bytes,
@@ -3552,18 +3553,19 @@ win_strncat_from_utf16(struct archive_string *as, const void *_p, size_t bytes,
 		ll = WideCharToMultiByte(sc->to_cp, 0,
 		    (LPCWSTR)u16, (int)bytes>>1, mbs, (int)mbs_size,
 			NULL, &defchar);
-		if (ll == 0 &&
-		    GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
-			/* Need more buffer for MBS. */
-			ll = WideCharToMultiByte(sc->to_cp, 0,
-			    (LPCWSTR)u16, (int)bytes, NULL, 0, NULL, NULL);
-			if (archive_string_ensure(as, ll +1) == NULL)
-				return (-1);
-			mbs = as->s + as->length;
-			mbs_size = as->buffer_length - as->length -1;
-			continue;
+		/* Exit loop if we succeeded */
+		if (ll != 0 ||
+		    GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+			break;
 		}
-	} while (0);
+		/* Else expand buffer and loop to try again. */
+		ll = WideCharToMultiByte(sc->to_cp, 0,
+		    (LPCWSTR)u16, (int)bytes, NULL, 0, NULL, NULL);
+		if (archive_string_ensure(as, ll +1) == NULL)
+			return (-1);
+		mbs = as->s + as->length;
+		mbs_size = as->buffer_length - as->length -1;
+	} while (1);
 	archive_string_free(&tmp);
 	as->length += ll;
 	as->s[as->length] = '\0';
@@ -3596,7 +3598,7 @@ is_big_endian(void)
 
 /*
  * Convert a current locale string to UTF-16BE/LE and copy the result.
- * Return -1 if conversion failes.
+ * Return -1 if conversion fails.
  */
 static int
 win_strncat_to_utf16(struct archive_string *as16, const void *_p,
@@ -3634,19 +3636,20 @@ win_strncat_to_utf16(struct archive_string *as16, const void *_p,
 	do {
 		count = MultiByteToWideChar(sc->from_cp,
 		    MB_PRECOMPOSED, s, (int)length, (LPWSTR)u16, (int)avail>>1);
-		if (count == 0 &&
-		    GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
-			/* Need more buffer for UTF-16 string */
-			count = MultiByteToWideChar(sc->from_cp,
-			    MB_PRECOMPOSED, s, (int)length, NULL, 0);
-			if (archive_string_ensure(as16, (count +1) * 2)
-			    == NULL)
-				return (-1);
-			u16 = as16->s + as16->length;
-			avail = as16->buffer_length - 2;
-			continue;
+		/* Exit loop if we succeeded */
+		if (count != 0 ||
+		    GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+			break;
 		}
-	} while (0);
+		/* Expand buffer and try again */
+		count = MultiByteToWideChar(sc->from_cp,
+		    MB_PRECOMPOSED, s, (int)length, NULL, 0);
+		if (archive_string_ensure(as16, (count +1) * 2)
+		    == NULL)
+			return (-1);
+		u16 = as16->s + as16->length;
+		avail = as16->buffer_length - 2;
+	} while (1);
 	as16->length += count * 2;
 	as16->s[as16->length] = 0;
 	as16->s[as16->length+1] = 0;
@@ -3700,7 +3703,7 @@ win_strncat_to_utf16le(struct archive_string *as16, const void *_p,
 
 /*
  * Convert a UTF-16BE string to current locale and copy the result.
- * Return -1 if conversion failes.
+ * Return -1 if conversion fails.
  */
 static int
 best_effort_strncat_from_utf16(struct archive_string *as, const void *_p,
@@ -3758,7 +3761,7 @@ best_effort_strncat_from_utf16le(struct archive_string *as, const void *_p,
 
 /*
  * Convert a current locale string to UTF-16BE/LE and copy the result.
- * Return -1 if conversion failes.
+ * Return -1 if conversion fails.
  */
 static int
 best_effort_strncat_to_utf16(struct archive_string *as16, const void *_p,

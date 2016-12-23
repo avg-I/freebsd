@@ -360,7 +360,6 @@ in6_control(struct socket *so, u_long cmd, caddr_t data,
 	case SIOCSPFXFLUSH_IN6:
 	case SIOCSRTRFLUSH_IN6:
 	case SIOCGIFALIFETIME_IN6:
-	case SIOCSIFALIFETIME_IN6:
 	case SIOCGIFSTAT_IN6:
 	case SIOCGIFSTAT_ICMP6:
 		sa6 = &ifr->ifr_addr;
@@ -459,34 +458,6 @@ in6_control(struct socket *so, u_long cmd, caddr_t data,
 			goto out;
 		}
 		break;
-
-	case SIOCSIFALIFETIME_IN6:
-	    {
-		struct in6_addrlifetime *lt;
-
-		if (td != NULL) {
-			error = priv_check(td, PRIV_NETINET_ALIFETIME6);
-			if (error)
-				goto out;
-		}
-		if (ia == NULL) {
-			error = EADDRNOTAVAIL;
-			goto out;
-		}
-		/* sanity for overflow - beware unsigned */
-		lt = &ifr->ifr_ifru.ifru_lifetime;
-		if (lt->ia6t_vltime != ND6_INFINITE_LIFETIME &&
-		    lt->ia6t_vltime + time_uptime < time_uptime) {
-			error = EINVAL;
-			goto out;
-		}
-		if (lt->ia6t_pltime != ND6_INFINITE_LIFETIME &&
-		    lt->ia6t_pltime + time_uptime < time_uptime) {
-			error = EINVAL;
-			goto out;
-		}
-		break;
-	    }
 	}
 
 	switch (cmd) {
@@ -570,21 +541,6 @@ in6_control(struct socket *so, u_long cmd, caddr_t data,
 			} else
 				retlt->ia6t_preferred = maxexpire;
 		}
-		break;
-
-	case SIOCSIFALIFETIME_IN6:
-		ia->ia6_lifetime = ifr->ifr_ifru.ifru_lifetime;
-		/* for sanity */
-		if (ia->ia6_lifetime.ia6t_vltime != ND6_INFINITE_LIFETIME) {
-			ia->ia6_lifetime.ia6t_expire =
-				time_uptime + ia->ia6_lifetime.ia6t_vltime;
-		} else
-			ia->ia6_lifetime.ia6t_expire = 0;
-		if (ia->ia6_lifetime.ia6t_pltime != ND6_INFINITE_LIFETIME) {
-			ia->ia6_lifetime.ia6t_preferred =
-				time_uptime + ia->ia6_lifetime.ia6t_pltime;
-		} else
-			ia->ia6_lifetime.ia6t_preferred = 0;
 		break;
 
 	case SIOCAIFADDR_IN6:
@@ -674,7 +630,7 @@ in6_control(struct socket *so, u_long cmd, caddr_t data,
 		/* relate the address to the prefix */
 		if (ia->ia6_ndpr == NULL) {
 			ia->ia6_ndpr = pr;
-			pr->ndpr_refcnt++;
+			pr->ndpr_addrcnt++;
 
 			/*
 			 * If this is the first autoconf address from the
@@ -682,7 +638,7 @@ in6_control(struct socket *so, u_long cmd, caddr_t data,
 			 * (when required).
 			 */
 			if ((ia->ia6_flags & IN6_IFF_AUTOCONF) &&
-			    V_ip6_use_tempaddr && pr->ndpr_refcnt == 1) {
+			    V_ip6_use_tempaddr && pr->ndpr_addrcnt == 1) {
 				int e;
 				if ((e = in6_tmpifadd(ia, 1, 0)) != 0) {
 					log(LOG_NOTICE, "in6_control: failed "
@@ -691,6 +647,7 @@ in6_control(struct socket *so, u_long cmd, caddr_t data,
 				}
 			}
 		}
+		nd6_prefix_rele(pr);
 
 		/*
 		 * this might affect the status of autoconfigured addresses,
@@ -734,12 +691,16 @@ aifaddr_out:
 		 * and the prefix management.  We do this, however, to provide
 		 * as much backward compatibility as possible in terms of
 		 * the ioctl operation.
-		 * Note that in6_purgeaddr() will decrement ndpr_refcnt.
+		 * Note that in6_purgeaddr() will decrement ndpr_addrcnt.
 		 */
 		pr = ia->ia6_ndpr;
 		in6_purgeaddr(&ia->ia_ifa);
-		if (pr && pr->ndpr_refcnt == 0)
-			prelist_remove(pr);
+		if (pr != NULL && pr->ndpr_addrcnt == 0) {
+			ND6_WLOCK();
+			nd6_prefix_unlink(pr, NULL);
+			ND6_WUNLOCK();
+			nd6_prefix_del(pr);
+		}
 		EVENTHANDLER_INVOKE(ifaddr_event, ifp);
 		break;
 	}
@@ -1349,9 +1310,9 @@ in6_unlink_ifa(struct in6_ifaddr *ia, struct ifnet *ifp)
 		    "in6_unlink_ifa: autoconf'ed address "
 		    "%s has no prefix\n", ip6_sprintf(ip6buf, IA6_IN6(ia))));
 	} else {
-		ia->ia6_ndpr->ndpr_refcnt--;
+		ia->ia6_ndpr->ndpr_addrcnt--;
 		/* Do not delete lles within prefix if refcont != 0 */
-		if (ia->ia6_ndpr->ndpr_refcnt == 0)
+		if (ia->ia6_ndpr->ndpr_addrcnt == 0)
 			remove_lle = 1;
 		ia->ia6_ndpr = NULL;
 	}
@@ -2366,10 +2327,16 @@ in6_lltable_dump_entry(struct lltable *llt, struct llentry *lle,
 			sdl = &ndpc.sdl;
 			sdl->sdl_family = AF_LINK;
 			sdl->sdl_len = sizeof(*sdl);
-			sdl->sdl_alen = ifp->if_addrlen;
 			sdl->sdl_index = ifp->if_index;
 			sdl->sdl_type = ifp->if_type;
-			bcopy(lle->ll_addr, LLADDR(sdl), ifp->if_addrlen);
+			if ((lle->la_flags & LLE_VALID) == LLE_VALID) {
+				sdl->sdl_alen = ifp->if_addrlen;
+				bcopy(lle->ll_addr, LLADDR(sdl),
+				    ifp->if_addrlen);
+			} else {
+				sdl->sdl_alen = 0;
+				bzero(LLADDR(sdl), ifp->if_addrlen);
+			}
 			if (lle->la_expire != 0)
 				ndpc.rtm.rtm_rmx.rmx_expire = lle->la_expire +
 				    lle->lle_remtime / hz +
@@ -2463,7 +2430,7 @@ in6_domifdetach(struct ifnet *ifp, void *aux)
 
 	mld_domifdetach(ifp);
 	scope6_ifdetach(ext->scope6_id);
-	nd6_ifdetach(ext->nd_ifinfo);
+	nd6_ifdetach(ifp, ext->nd_ifinfo);
 	lltable_free(ext->lltable);
 	COUNTER_ARRAY_FREE(ext->in6_ifstat,
 	    sizeof(struct in6_ifstat) / sizeof(uint64_t));

@@ -44,7 +44,7 @@ LDIRS=	bsm cam geom net net80211 netgraph netinet netinet6 \
 
 LSUBDIRS=	cam/ata cam/nvme cam/scsi \
 	dev/acpica dev/agp dev/an dev/bktr dev/ciss dev/filemon dev/firewire \
-	dev/hwpmc \
+	dev/hwpmc dev/hyperv \
 	dev/ic dev/iicbus dev/io dev/lmc dev/mfi dev/nvme \
 	dev/ofw dev/pbio dev/pci ${_dev_powermac_nvram} dev/ppbus dev/smbus \
 	dev/speaker dev/utopia dev/vkbd dev/wi \
@@ -59,6 +59,7 @@ LSUBDIRS=	cam/ata cam/nvme cam/scsi \
 	security/audit \
 	security/mac_biba security/mac_bsdextended security/mac_lomac \
 	security/mac_mls security/mac_partition \
+	sys/disk \
 	ufs/ffs ufs/ufs
 
 LSUBSUBDIRS=	dev/mpt/mpilib
@@ -107,7 +108,7 @@ NEWVERS_SH=		${SYSDIR}/conf/newvers.sh
 PARAM_H=		${SYSDIR}/sys/param.h
 MK_OSRELDATE_SH=	${.CURDIR}/mk-osreldate.sh
 
-SYMLINKS+= ${INCLUDEDIR} ${LIBDIR}/include
+SYMLINKS+= ${LIBDIR:C,[^/]+,..,g:C,^/,,}${INCLUDEDIR} ${LIBDIR}/include
 
 osreldate.h: ${NEWVERS_SH} ${PARAM_H} ${MK_OSRELDATE_SH}
 	env NEWVERS_SH=${NEWVERS_SH} PARAMFILE=${PARAM_H} SYSDIR=${SYSDIR} \
@@ -154,7 +155,7 @@ copies: .PHONY .META
 		done; \
 	fi
 .endfor
-.for i in ${LDIRS} ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/bktr:Ndev/nand:Ndev/pci} ${LSUBSUBDIRS}
+.for i in ${LDIRS} ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/bktr:Ndev/evdev:Ndev/hyperv:Ndev/nand:Ndev/pci} ${LSUBSUBDIRS}
 	cd ${.CURDIR}/../sys; \
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 $i/*.h \
 	    ${DESTDIR}${INCLUDEDIR}/$i
@@ -177,6 +178,19 @@ copies: .PHONY .META
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 nand_dev.h \
 	    ${DESTDIR}${INCLUDEDIR}/dev/nand
 .endif
+	cd ${.CURDIR}/../sys/dev/evdev; \
+	${INSTALL} -C -o ${BINOWN} -g ${BINGRP} -m 444 input.h \
+	    ${DESTDIR}${INCLUDEDIR}/dev/evdev; \
+	${INSTALL} -C -o ${BINOWN} -g ${BINGRP} -m 444 input-event-codes.h \
+	    ${DESTDIR}${INCLUDEDIR}/dev/evdev; \
+	${INSTALL} -C -o ${BINOWN} -g ${BINGRP} -m 444 uinput.h \
+	    ${DESTDIR}${INCLUDEDIR}/dev/evdev
+	cd ${.CURDIR}/../sys/dev/hyperv/include; \
+	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 hyperv.h \
+	    ${DESTDIR}${INCLUDEDIR}/dev/hyperv
+	cd ${.CURDIR}/../sys/dev/hyperv/utilities; \
+	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 hv_snapshot.h \
+	    ${DESTDIR}${INCLUDEDIR}/dev/hyperv
 	cd ${.CURDIR}/../sys/dev/pci; \
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 pcireg.h \
 	    ${DESTDIR}${INCLUDEDIR}/dev/pci
@@ -229,6 +243,17 @@ copies: .PHONY .META
 	cd ${.CURDIR}/../sys/teken; \
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 teken.h \
 	    ${DESTDIR}${INCLUDEDIR}/teken
+.if ${MK_CDDL} != "no"
+	cd ${.CURDIR}/../cddl/contrib/opensolaris/lib/libzfs_core/common; \
+	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 libzfs_core.h \
+	    ${DESTDIR}${INCLUDEDIR}
+	cd ${.CURDIR}/../cddl/contrib/opensolaris/lib/libnvpair; \
+	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 libnvpair.h \
+	    ${DESTDIR}${INCLUDEDIR}
+	cd ${.CURDIR}/../sys/cddl/contrib/opensolaris/uts/common/sys; \
+	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 nvpair.h \
+	    ${DESTDIR}${INCLUDEDIR}/sys
+.endif
 
 symlinks: .PHONY .META
 	@${ECHO} "Setting up symlinks to kernel source tree..."
@@ -238,7 +263,7 @@ symlinks: .PHONY .META
 		${INSTALL_SYMLINK} ${TAG_ARGS} ../../../sys/$i/$$h ${DESTDIR}${INCLUDEDIR}/$i; \
 	done
 .endfor
-.for i in ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/bktr:Ndev/nand:Ndev/pci}
+.for i in ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/bktr:Ndev/evdev:Ndev/hyperv:Ndev/nand:Ndev/pci}
 	cd ${.CURDIR}/../sys/$i; \
 	for h in *.h; do \
 		${INSTALL_SYMLINK} ${TAG_ARGS} ../../../../sys/$i/$$h ${DESTDIR}${INCLUDEDIR}/$i; \
@@ -266,6 +291,21 @@ symlinks: .PHONY .META
 		    ${DESTDIR}${INCLUDEDIR}/dev/nand; \
 	done
 .endif
+	cd ${.CURDIR}/../sys/dev/evdev; \
+	for h in input.h input-event-codes.h uinput.h; do \
+		ln -fs ../../../../sys/dev/evdev/$$h \
+		    ${DESTDIR}${INCLUDEDIR}/dev/evdev; \
+	done
+	cd ${.CURDIR}/../sys/dev/hyperv/include; \
+	for h in hyperv.h; do \
+		${INSTALL_SYMLINK} ${TAG_ARGS} ../../../../sys/dev/hyperv/include/$$h \
+		    ${DESTDIR}${INCLUDEDIR}/dev/hyperv; \
+	done
+	cd ${.CURDIR}/../sys/dev/hyperv/utilities; \
+	for h in hv_snapshot.h; do \
+		${INSTALL_SYMLINK} ${TAG_ARGS} ../../../../sys/dev/hyperv/utilities/$$h \
+		    ${DESTDIR}${INCLUDEDIR}/dev/hyperv; \
+	done
 	cd ${.CURDIR}/../sys/dev/pci; \
 	for h in pcireg.h; do \
 		${INSTALL_SYMLINK} ${TAG_ARGS} ../../../../sys/dev/pci/$$h \

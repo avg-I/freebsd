@@ -60,7 +60,6 @@ __FBSDID("$FreeBSD$");
 #endif
 #ifdef CPU_MV_PJ4B
 #include <arm/mv/mvwin.h>
-#include <dev/fdt/fdt_common.h>
 #endif
 
 extern struct pcpu __pcpu[];
@@ -199,6 +198,9 @@ init_secondary(int cpu)
 	vfp_init();
 #endif
 
+	/* Configure the interrupt controller */
+	intr_pic_init_secondary();
+
 	mtx_lock_spin(&ap_boot_mtx);
 
 	atomic_add_rel_32(&smp_cpus, 1);
@@ -237,7 +239,6 @@ init_secondary(int cpu)
 	cpu_initclocks_ap();
 
 	CTR0(KTR_SMP, "go into scheduler");
-	intr_pic_init_secondary();
 
 	/* Enter the scheduler */
 	sched_throw(NULL);
@@ -465,9 +466,8 @@ release_aps(void *dummy __unused)
 #endif
 	atomic_store_rel_int(&aps_ready, 1);
 	/* Wake the other threads up */
-#if __ARM_ARCH >= 7
-	armv7_sev();
-#endif
+	dsb();
+	sev();
 
 	printf("Release APs\n");
 

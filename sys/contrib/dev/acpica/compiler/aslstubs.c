@@ -47,6 +47,7 @@
 #include <contrib/dev/acpica/include/acevents.h>
 #include <contrib/dev/acpica/include/acinterp.h>
 #include <contrib/dev/acpica/include/acnamesp.h>
+#include <contrib/dev/acpica/include/acparser.h>
 
 #define _COMPONENT          ACPI_COMPILER
         ACPI_MODULE_NAME    ("aslstubs")
@@ -66,6 +67,13 @@ AcpiNsExecModuleCodeList (
 ACPI_STATUS
 AcpiNsInitializeObjects (
     void)
+{
+    return (AE_OK);
+}
+
+ACPI_STATUS
+AcpiPsExecuteTable (
+    ACPI_EVALUATE_INFO      *Info)
 {
     return (AE_OK);
 }
@@ -156,6 +164,13 @@ AcpiEvDeleteGpeBlock (
     return (AE_OK);
 }
 
+void
+AcpiEvUpdateGpes (
+    ACPI_OWNER_ID           TableOwnerId)
+{
+    return;
+}
+
 ACPI_STATUS
 AcpiEvAcquireGlobalLock (
     UINT16                  Timeout)
@@ -173,8 +188,7 @@ AcpiEvReleaseGlobalLock (
 
 ACPI_STATUS
 AcpiEvInitializeRegion (
-    ACPI_OPERAND_OBJECT     *RegionObj,
-    BOOLEAN                 AcpiNsLocked)
+    ACPI_OPERAND_OBJECT     *RegionObj)
 {
     return (AE_OK);
 }

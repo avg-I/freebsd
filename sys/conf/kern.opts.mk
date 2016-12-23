@@ -47,7 +47,8 @@ __DEFAULT_NO_OPTIONS = \
     EISA \
     EXTRA_TCP_STACKS \
     NAND \
-    OFED
+    OFED \
+    REPRODUCIBLE_BUILD
 
 # Some options are totally broken on some architectures. We disable
 # them. If you need to enable them on an experimental basis, you
@@ -65,7 +66,7 @@ BROKEN_OPTIONS+= CDDL ZFS
 .endif
 
 .if ${MACHINE_CPUARCH} == "mips"
-BROKEN_OPTIONS+= CDDL ZFS
+BROKEN_OPTIONS+= CDDL ZFS SSP
 .endif
 
 .if ${MACHINE_CPUARCH} == "powerpc" && ${MACHINE_ARCH} == "powerpc"

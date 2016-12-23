@@ -60,7 +60,7 @@ __FBSDID("$FreeBSD$");
 #include <fs/nfsclient/nfs_kdtrace.h>
 
 extern int newnfs_directio_allow_mmap;
-extern struct nfsstats newnfsstats;
+extern struct nfsstatsv1 nfsstatsv1;
 extern struct mtx ncl_iod_mutex;
 extern int ncl_numasync;
 extern enum nfsiod_state ncl_iodwant[NFS_MAXASYNCDAEMON];
@@ -78,6 +78,40 @@ static int nfs_directio_write(struct vnode *vp, struct uio *uiop,
 /*
  * Vnode op for VM getpages.
  */
+SYSCTL_DECL(_vfs_nfs);
+static int use_buf_pager = 1;
+SYSCTL_INT(_vfs_nfs, OID_AUTO, use_buf_pager, CTLFLAG_RWTUN,
+    &use_buf_pager, 0,
+    "Use buffer pager instead of direct readrpc call");
+
+static daddr_t
+ncl_gbp_getblkno(struct vnode *vp, vm_ooffset_t off)
+{
+
+	return (off / vp->v_bufobj.bo_bsize);
+}
+
+static int
+ncl_gbp_getblksz(struct vnode *vp, daddr_t lbn)
+{
+	struct nfsnode *np;
+	u_quad_t nsize;
+	int biosize, bcount;
+
+	np = VTONFS(vp);
+	mtx_lock(&np->n_mtx);
+	nsize = np->n_size;
+	mtx_unlock(&np->n_mtx);
+
+	biosize = vp->v_bufobj.bo_bsize;
+	bcount = biosize;
+	if ((off_t)lbn * biosize >= nsize)
+		bcount = 0;
+	else if ((off_t)(lbn + 1) * biosize > nsize)
+		bcount = nsize - (off_t)lbn * biosize;
+	return (bcount);
+}
+
 int
 ncl_getpages(struct vop_getpages_args *ap)
 {
@@ -96,14 +130,14 @@ ncl_getpages(struct vop_getpages_args *ap)
 
 	vp = ap->a_vp;
 	np = VTONFS(vp);
-	td = curthread;				/* XXX */
-	cred = curthread->td_ucred;		/* XXX */
+	td = curthread;
+	cred = curthread->td_ucred;
 	nmp = VFSTONFS(vp->v_mount);
 	pages = ap->a_m;
 	npages = ap->a_count;
 
 	if ((object = vp->v_object) == NULL) {
-		ncl_printf("nfs_getpages: called with non-merged cache vnode??\n");
+		printf("ncl_getpages: called with non-merged cache vnode\n");
 		return (VM_PAGER_ERROR);
 	}
 
@@ -111,7 +145,7 @@ ncl_getpages(struct vop_getpages_args *ap)
 		mtx_lock(&np->n_mtx);
 		if ((np->n_flag & NNONCACHE) && (vp->v_type == VREG)) {
 			mtx_unlock(&np->n_mtx);
-			ncl_printf("nfs_getpages: called on non-cacheable vnode??\n");
+			printf("ncl_getpages: called on non-cacheable vnode\n");
 			return (VM_PAGER_ERROR);
 		} else
 			mtx_unlock(&np->n_mtx);
@@ -125,6 +159,10 @@ ncl_getpages(struct vop_getpages_args *ap)
 		(void)ncl_fsinfo(nmp, vp, cred, td);
 	} else
 		mtx_unlock(&nmp->nm_mtx);
+
+	if (use_buf_pager)
+		return (vfs_bio_getpages(vp, pages, npages, ap->a_rbehind,
+		    ap->a_rahead, ncl_gbp_getblkno, ncl_gbp_getblksz));
 
 	/*
 	 * If the requested page is partially valid, just return it and
@@ -166,7 +204,7 @@ ncl_getpages(struct vop_getpages_args *ap)
 	relpbuf(bp, &ncl_pbuf_freecnt);
 
 	if (error && (uio.uio_resid == count)) {
-		ncl_printf("nfs_getpages: error %d\n", error);
+		printf("ncl_getpages: error %d\n", error);
 		return (VM_PAGER_ERROR);
 	}
 
@@ -267,7 +305,7 @@ ncl_putpages(struct vop_putpages_args *ap)
 	if (newnfs_directio_enable && !newnfs_directio_allow_mmap &&
 	    (np->n_flag & NNONCACHE) && (vp->v_type == VREG)) {
 		mtx_unlock(&np->n_mtx);
-		ncl_printf("ncl_putpages: called on noncache-able vnode??\n");
+		printf("ncl_putpages: called on noncache-able vnode\n");
 		mtx_lock(&np->n_mtx);
 	}
 
@@ -466,7 +504,7 @@ ncl_bioread(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred)
 
 	    switch (vp->v_type) {
 	    case VREG:
-		NFSINCRGLOBAL(newnfsstats.biocache_reads);
+		NFSINCRGLOBAL(nfsstatsv1.biocache_reads);
 		lbn = uio->uio_offset / biosize;
 		on = uio->uio_offset - (lbn * biosize);
 
@@ -543,7 +581,7 @@ ncl_bioread(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred)
 			n = MIN((unsigned)(bcount - on), uio->uio_resid);
 		break;
 	    case VLNK:
-		NFSINCRGLOBAL(newnfsstats.biocache_readlinks);
+		NFSINCRGLOBAL(nfsstatsv1.biocache_readlinks);
 		bp = nfs_getcacheblk(vp, (daddr_t)0, NFS_MAXPATHLEN, td);
 		if (!bp) {
 			error = newnfs_sigintr(nmp, td);
@@ -563,7 +601,7 @@ ncl_bioread(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred)
 		on = 0;
 		break;
 	    case VDIR:
-		NFSINCRGLOBAL(newnfsstats.biocache_readdirs);
+		NFSINCRGLOBAL(nfsstatsv1.biocache_readdirs);
 		if (np->n_direofoffset
 		    && uio->uio_offset >= np->n_direofoffset) {
 		    return (0);
@@ -678,7 +716,7 @@ ncl_bioread(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred)
 			n = np->n_direofoffset - uio->uio_offset;
 		break;
 	    default:
-		ncl_printf(" ncl_bioread: type %x unexpected\n", vp->v_type);
+		printf(" ncl_bioread: type %x unexpected\n", vp->v_type);
 		bp = NULL;
 		break;
 	    }
@@ -992,7 +1030,7 @@ ncl_write(struct vop_write_args *ap)
 			}
 		}
 
-		NFSINCRGLOBAL(newnfsstats.biocache_writes);
+		NFSINCRGLOBAL(nfsstatsv1.biocache_writes);
 		lbn = uio->uio_offset / biosize;
 		on = uio->uio_offset - (lbn * biosize);
 		n = MIN((unsigned)(biosize - on), uio->uio_resid);
@@ -1121,7 +1159,7 @@ again:
 		 */
 
 		if (bp->b_dirtyend > bcount) {
-			ncl_printf("NFS append race @%lx:%d\n",
+			printf("NFS append race @%lx:%d\n",
 			    (long)bp->b_blkno * DEV_BSIZE,
 			    bp->b_dirtyend - bcount);
 			bp->b_dirtyend = bcount;
@@ -1606,7 +1644,7 @@ ncl_doio(struct vnode *vp, struct buf *bp, struct ucred *cr, struct thread *td,
 	    switch (vp->v_type) {
 	    case VREG:
 		uiop->uio_offset = ((off_t)bp->b_blkno) * DEV_BSIZE;
-		NFSINCRGLOBAL(newnfsstats.read_bios);
+		NFSINCRGLOBAL(nfsstatsv1.read_bios);
 		error = ncl_readrpc(vp, uiop, cr);
 
 		if (!error) {
@@ -1641,11 +1679,11 @@ ncl_doio(struct vnode *vp, struct buf *bp, struct ucred *cr, struct thread *td,
 		break;
 	    case VLNK:
 		uiop->uio_offset = (off_t)0;
-		NFSINCRGLOBAL(newnfsstats.readlink_bios);
+		NFSINCRGLOBAL(nfsstatsv1.readlink_bios);
 		error = ncl_readlinkrpc(vp, uiop, cr);
 		break;
 	    case VDIR:
-		NFSINCRGLOBAL(newnfsstats.readdir_bios);
+		NFSINCRGLOBAL(nfsstatsv1.readdir_bios);
 		uiop->uio_offset = ((u_quad_t)bp->b_lblkno) * NFS_DIRBLKSIZ;
 		if ((nmp->nm_flag & NFSMNT_RDIRPLUS) != 0) {
 			error = ncl_readdirplusrpc(vp, uiop, cr, td);
@@ -1662,7 +1700,7 @@ ncl_doio(struct vnode *vp, struct buf *bp, struct ucred *cr, struct thread *td,
 			bp->b_flags |= B_INVAL;
 		break;
 	    default:
-		ncl_printf("ncl_doio:  type %x unexpected\n", vp->v_type);
+		printf("ncl_doio:  type %x unexpected\n", vp->v_type);
 		break;
 	    }
 	    if (error) {
@@ -1707,7 +1745,7 @@ ncl_doio(struct vnode *vp, struct buf *bp, struct ucred *cr, struct thread *td,
 		    + bp->b_dirtyoff;
 		io.iov_base = (char *)bp->b_data + bp->b_dirtyoff;
 		uiop->uio_rw = UIO_WRITE;
-		NFSINCRGLOBAL(newnfsstats.write_bios);
+		NFSINCRGLOBAL(nfsstatsv1.write_bios);
 
 		if ((bp->b_flags & (B_ASYNC | B_NEEDCOMMIT | B_NOCACHE | B_CLUSTER)) == B_ASYNC)
 		    iomode = NFSWRITE_UNSTABLE;

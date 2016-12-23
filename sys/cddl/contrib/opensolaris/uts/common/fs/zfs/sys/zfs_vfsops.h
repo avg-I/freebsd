@@ -75,6 +75,7 @@ struct zfsvfs {
 	boolean_t	z_use_fuids;	/* version allows fuids */
 	boolean_t	z_replay;	/* set during ZIL replay */
 	boolean_t	z_use_sa;	/* version allow system attributes */
+	boolean_t	z_use_namecache;/* make use of FreeBSD name cache */
 	uint64_t	z_version;	/* ZPL version */
 	uint64_t	z_shares_dir;	/* hidden shares dir */
 	kmutex_t	z_lock;
@@ -141,7 +142,7 @@ extern uint_t zfs_fsyncer_key;
 extern int zfs_super_owner;
 
 extern int zfs_suspend_fs(zfsvfs_t *zfsvfs);
-extern int zfs_resume_fs(zfsvfs_t *zfsvfs, const char *osname);
+extern int zfs_resume_fs(zfsvfs_t *zfsvfs, struct dsl_dataset *ds);
 extern int zfs_userspace_one(zfsvfs_t *zfsvfs, zfs_userquota_prop_t type,
     const char *domain, uint64_t rid, uint64_t *valuep);
 extern int zfs_userspace_many(zfsvfs_t *zfsvfs, zfs_userquota_prop_t type,

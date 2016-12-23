@@ -1,4 +1,4 @@
-/*	$NetBSD: cd9660.c,v 1.31 2011/08/06 23:25:19 christos Exp $	*/
+/*	$NetBSD: cd9660.c,v 1.32 2011/08/23 17:09:11 christos Exp $	*/
 
 /*
  * Copyright (c) 2005 Daniel Watt, Walter Deignan, Ryan Gabrys, Alan
@@ -98,10 +98,11 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <string.h>
-#include <ctype.h>
 #include <sys/param.h>
 #include <sys/queue.h>
+#include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "makefs.h"
 #include "cd9660.h"
@@ -442,7 +443,7 @@ cd9660_parse_opts(const char *option, fsinfo_t *fsopts)
  */
 void
 cd9660_makefs(const char *image, const char *dir, fsnode *root,
-	      fsinfo_t *fsopts)
+    fsinfo_t *fsopts)
 {
 	int64_t startoffset;
 	int numDirectories;
@@ -619,7 +620,7 @@ typedef int (*cd9660node_func)(cd9660node *);
 static void
 cd9660_finalize_PVD(void)
 {
-	time_t tim;
+	time_t tstamp = stampst.st_ino ? stampst.st_mtime : time(NULL);
 
 	/* root should be a fixed size of 34 bytes since it has no name */
 	memcpy(diskStructure.primaryDescriptor.root_directory_record,
@@ -668,26 +669,26 @@ cd9660_finalize_PVD(void)
 		diskStructure.primaryDescriptor.bibliographic_file_id, 37);
 
 	/* Setup dates */
-	time(&tim);
 	cd9660_time_8426(
 	    (unsigned char *)diskStructure.primaryDescriptor.creation_date,
-	    tim);
+	    tstamp);
 	cd9660_time_8426(
 	    (unsigned char *)diskStructure.primaryDescriptor.modification_date,
-	    tim);
+	    tstamp);
 
-	/*
-	cd9660_set_date(diskStructure.primaryDescriptor.expiration_date, now);
-	*/
+#if 0
+	cd9660_set_date(diskStructure.primaryDescriptor.expiration_date,
+	    tstamp);
+#endif
 
 	memset(diskStructure.primaryDescriptor.expiration_date, '0', 16);
 	diskStructure.primaryDescriptor.expiration_date[16] = 0;
 	cd9660_time_8426(
 	    (unsigned char *)diskStructure.primaryDescriptor.effective_date,
-	    tim);
+	    tstamp);
 	/* make this sane */
 	cd9660_time_915(diskStructure.rootNode->dot_record->isoDirRecord->date,
-			tim);
+	    tstamp);
 }
 
 static void
@@ -808,7 +809,7 @@ cd9660_fill_extended_attribute_record(cd9660node *node)
 static int
 cd9660_translate_node_common(cd9660node *newnode)
 {
-	time_t tim;
+	time_t tstamp = stampst.st_ino ? stampst.st_mtime : time(NULL);
 	int test;
 	u_char flag;
 	char temp[ISO_FILENAME_MAXLENGTH_WITH_PADDING];
@@ -829,9 +830,8 @@ cd9660_translate_node_common(cd9660node *newnode)
 	/* Set the various dates */
 
 	/* If we want to use the current date and time */
-	time(&tim);
 
-	cd9660_time_915(newnode->isoDirRecord->date, tim);
+	cd9660_time_915(newnode->isoDirRecord->date, tstamp);
 
 	cd9660_bothendian_dword(newnode->fileDataLength,
 	    newnode->isoDirRecord->size);
@@ -876,7 +876,8 @@ cd9660_translate_node(fsnode *node, cd9660node *newnode)
 		return 0;
 
 	/* Finally, overwrite some of the values that are set by default */
-	cd9660_time_915(newnode->isoDirRecord->date, node->inode->st.st_mtime);
+	cd9660_time_915(newnode->isoDirRecord->date,
+	    stampst.st_ino ? stampst.st_mtime : node->inode->st.st_mtime);
 
 	return 1;
 }
@@ -1069,7 +1070,7 @@ cd9660_rename_filename(cd9660node *iter, int num, int delete_chars)
 
 	tmp = malloc(ISO_FILENAME_MAXLENGTH_WITH_PADDING);
 
-	while (i < num) {
+	while (i < num && iter) {
 		powers = 1;
 		count = 0;
 		digits = 1;
@@ -1261,6 +1262,8 @@ cd9660_rrip_move_directory(cd9660node *dir)
 				diskStructure.rootNode, dir);
 		if (diskStructure.rr_moved_dir == NULL)
 			return 0;
+		cd9660_time_915(diskStructure.rr_moved_dir->isoDirRecord->date,
+		    stampst.st_ino ? stampst.st_mtime : start_time.tv_sec);
 	}
 
 	/* Create a file with the same ORIGINAL name */
@@ -1620,6 +1623,7 @@ cd9660_level1_convert_filename(const char *oldname, char *newname, int is_file)
 			if (diskStructure.archimedes_enabled &&
 			    *oldname == ',' && strlen(oldname) == 4)
 				break;
+
 			/* Enforce 12.3 / 8 */
 			if (namelen == 8 && !found_ext)
 				break;
@@ -1627,7 +1631,7 @@ cd9660_level1_convert_filename(const char *oldname, char *newname, int is_file)
 			if (islower((unsigned char)*oldname))
 				*newname++ = toupper((unsigned char)*oldname);
 			else if (isupper((unsigned char)*oldname)
-				    || isdigit((unsigned char)*oldname))
+			    || isdigit((unsigned char)*oldname))
 				*newname++ = *oldname;
 			else
 				*newname++ = '_';
@@ -1637,7 +1641,7 @@ cd9660_level1_convert_filename(const char *oldname, char *newname, int is_file)
 			else
 				namelen++;
 		}
-		oldname ++;
+		oldname++;
 	}
 	if (is_file) {
 		if (!found_ext && !diskStructure.omit_trailing_period)

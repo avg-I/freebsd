@@ -6,6 +6,8 @@ _LIBARCHIVEDIR=	${SRCTOP}/contrib/libarchive
 
 ATF_TESTS_SH+=	functional_test
 
+TEST_METADATA.functional_test+=	timeout="600"
+
 BINDIR=	${TESTSDIR}
 
 PROGS+=	libarchive_test
@@ -69,8 +71,11 @@ TESTS_SRCS= \
 	test_compat_lzop.c			\
 	test_compat_mac.c			\
 	test_compat_pax_libarchive_2x.c		\
+	test_compat_perl_archive_tar.c		\
+	test_compat_plexus_archiver_tar.c	\
 	test_compat_solaris_tar_acl.c		\
 	test_compat_solaris_pax_sparse.c	\
+	test_compat_star_acl_posix1e.c		\
 	test_compat_tar_hardlink.c		\
 	test_compat_uudecode.c			\
 	test_compat_uudecode_large.c		\
@@ -149,11 +154,13 @@ TESTS_SRCS= \
 	test_read_format_lha_bugfix_0.c		\
 	test_read_format_lha_filename.c		\
 	test_read_format_mtree.c		\
+	test_read_format_mtree_crash747.c	\
 	test_read_format_pax_bz2.c		\
 	test_read_format_rar.c			\
 	test_read_format_rar_encryption_data.c	\
 	test_read_format_rar_encryption_header.c	\
 	test_read_format_rar_encryption_partially.c	\
+	test_read_format_rar_invalid1.c		\
 	test_read_format_raw.c			\
 	test_read_format_tar.c			\
 	test_read_format_tar_concatenated.c	\
@@ -174,6 +181,7 @@ TESTS_SRCS= \
 	test_read_format_zip_encryption_header.c	\
 	test_read_format_zip_encryption_partially.c	\
 	test_read_format_zip_filename.c		\
+	test_read_format_zip_high_compression.c	\
 	test_read_format_zip_mac_metadata.c	\
 	test_read_format_zip_malformed.c	\
 	test_read_format_zip_msdos.c		\
@@ -208,6 +216,9 @@ TESTS_SRCS= \
 	test_write_disk_no_hfs_compression.c	\
 	test_write_disk_perms.c			\
 	test_write_disk_secure.c		\
+	test_write_disk_secure744.c		\
+	test_write_disk_secure745.c		\
+	test_write_disk_secure746.c		\
 	test_write_disk_sparse.c		\
 	test_write_disk_symlink.c		\
 	test_write_disk_times.c			\
@@ -233,6 +244,7 @@ TESTS_SRCS= \
 	test_write_format_cpio_newc.c		\
 	test_write_format_cpio_odc.c		\
 	test_write_format_gnutar.c		\
+	test_write_format_gnutar_filenames.c	\
 	test_write_format_iso9660.c		\
 	test_write_format_iso9660_boot.c	\
 	test_write_format_iso9660_empty.c	\
@@ -312,6 +324,7 @@ ${PACKAGE}FILES+=	test_compat_bzip2_1.tbz.uu
 ${PACKAGE}FILES+=	test_compat_bzip2_2.tbz.uu
 ${PACKAGE}FILES+=	test_compat_cpio_1.cpio.uu
 ${PACKAGE}FILES+=	test_compat_gtar_1.tar.uu
+${PACKAGE}FILES+=	test_compat_gtar_2.tar.uu
 ${PACKAGE}FILES+=	test_compat_gzip_1.tgz.uu
 ${PACKAGE}FILES+=	test_compat_gzip_2.tgz.uu
 ${PACKAGE}FILES+=	test_compat_lz4_1.tar.lz4.uu
@@ -337,9 +350,12 @@ ${PACKAGE}FILES+=	test_compat_lzop_3.tar.lzo.uu
 ${PACKAGE}FILES+=	test_compat_mac-1.tar.Z.uu
 ${PACKAGE}FILES+=	test_compat_mac-2.tar.Z.uu
 ${PACKAGE}FILES+=	test_compat_pax_libarchive_2x.tar.Z.uu
+${PACKAGE}FILES+=	test_compat_perl_archive_tar.tar.uu
+${PACKAGE}FILES+=	test_compat_plexus_archiver_tar.tar.uu
 ${PACKAGE}FILES+=	test_compat_solaris_pax_sparse_1.pax.Z.uu
 ${PACKAGE}FILES+=	test_compat_solaris_pax_sparse_2.pax.Z.uu
 ${PACKAGE}FILES+=	test_compat_solaris_tar_acl.tar.uu
+${PACKAGE}FILES+=	test_compat_star_acl_posix1e.tar.uu
 ${PACKAGE}FILES+=	test_compat_tar_hardlink_1.tar.uu
 ${PACKAGE}FILES+=	test_compat_uudecode_large.tar.Z.uu
 ${PACKAGE}FILES+=	test_compat_xz_1.txz.uu
@@ -458,6 +474,7 @@ ${PACKAGE}FILES+=	test_read_format_lha_lh6.lzh.uu
 ${PACKAGE}FILES+=	test_read_format_lha_lh7.lzh.uu
 ${PACKAGE}FILES+=	test_read_format_lha_withjunk.lzh.uu
 ${PACKAGE}FILES+=	test_read_format_mtree.mtree.uu
+${PACKAGE}FILES+=	test_read_format_mtree_crash747.mtree.bz2.uu
 ${PACKAGE}FILES+=	test_read_format_mtree_nomagic.mtree.uu
 ${PACKAGE}FILES+=	test_read_format_mtree_nomagic2.mtree.uu
 ${PACKAGE}FILES+=	test_read_format_mtree_nomagic3.mtree.uu
@@ -468,6 +485,7 @@ ${PACKAGE}FILES+=	test_read_format_rar_compress_normal.rar.uu
 ${PACKAGE}FILES+=	test_read_format_rar_encryption_data.rar.uu
 ${PACKAGE}FILES+=	test_read_format_rar_encryption_header.rar.uu
 ${PACKAGE}FILES+=	test_read_format_rar_encryption_partially.rar.uu
+${PACKAGE}FILES+=	test_read_format_rar_invalid1.rar.uu
 ${PACKAGE}FILES+=	test_read_format_rar_multi_lzss_blocks.rar.uu
 ${PACKAGE}FILES+=	test_read_format_rar_multivolume.part0001.rar.uu
 ${PACKAGE}FILES+=	test_read_format_rar_multivolume.part0002.rar.uu
@@ -479,6 +497,7 @@ ${PACKAGE}FILES+=	test_read_format_rar_sfx.exe.uu
 ${PACKAGE}FILES+=	test_read_format_rar_subblock.rar.uu
 ${PACKAGE}FILES+=	test_read_format_rar_unicode.rar.uu
 ${PACKAGE}FILES+=	test_read_format_rar_windows.rar.uu
+${PACKAGE}FILES+=	test_read_format_raw.bufr.uu
 ${PACKAGE}FILES+=	test_read_format_raw.data.Z.uu
 ${PACKAGE}FILES+=	test_read_format_raw.data.uu
 ${PACKAGE}FILES+=	test_read_format_tar_concatenated.tar.uu
@@ -501,6 +520,7 @@ ${PACKAGE}FILES+=	test_read_format_zip_filename_koi8r.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_filename_utf8_jp.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_filename_utf8_ru.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_filename_utf8_ru2.zip.uu
+${PACKAGE}FILES+=	test_read_format_zip_high_compression.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_length_at_end.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_mac_metadata.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_malformed1.zip.uu

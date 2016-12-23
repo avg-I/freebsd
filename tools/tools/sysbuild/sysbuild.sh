@@ -242,7 +242,7 @@ ports_build() (
 	do
 		b=`echo $p | tr / _`
 		t=`echo $p | sed "s,${pd},,"`
-		pn=`cd $p && make package-name`
+		pn=`cd $p && make package-name ${PORTS_OPTS}`
 
 		if [ "x`basename $p`" == "xpkg" ] ; then
 			log_it "Very Special: $t ($pn)"
@@ -273,8 +273,7 @@ ports_build() (
 		miss=`(cd $p ; make missing ${PORTS_OPTS}) || true`
 
 		if [ "x${miss}" != "x" ] ; then
-			log_it "MISSING for $p:" $miss
-			continue
+			log_it "NB: MISSING for $p:" $miss
 		fi
 
 		log_it "build $pn ($p)"
@@ -289,7 +288,7 @@ ports_build() (
 			else
 				log_it FAIL build $p
 			fi
-			make clean
+			make clean ${PORTS_OPTS}
 		) > _.$b 2>&1 < /dev/null
 	done
 )

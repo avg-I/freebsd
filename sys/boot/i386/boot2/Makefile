@@ -33,7 +33,7 @@ CFLAGS=	-fomit-frame-pointer \
 	-DSIOSPD=${BOOT_COMCONSOLE_SPEED} \
 	-I${.CURDIR}/../../common \
 	-I${.CURDIR}/../btx/lib -I. \
-	-Wall -Waggregate-return -Wbad-function-cast -Wcast-align \
+	-Wall -Waggregate-return -Wbad-function-cast -Wno-cast-align \
 	-Wmissing-declarations -Wmissing-prototypes -Wnested-externs \
 	-Wpointer-arith -Wshadow -Wstrict-prototypes -Wwrite-strings \
 	-Winline
@@ -48,7 +48,7 @@ CFLAGS.gcc+=   -mno-align-long-strings
 
 CFLAGS.clang+=	-Oz ${CLANG_OPT_SMALL}
 
-LD_FLAGS=-static -N --gc-sections
+LD_FLAGS=${LD_FLAGS_BIN}
 
 # Pick up ../Makefile.inc early.
 .include <bsd.init.mk>
@@ -72,14 +72,14 @@ CLEANFILES+=	boot2 boot2.ld boot2.ldr boot2.bin boot2.out boot2.o \
 boot2: boot2.ld
 	@set -- `ls -l boot2.ld`; x=$$((7680-$$5)); \
 	    echo "$$x bytes available"; test $$x -ge 0
-	dd if=boot2.ld of=${.TARGET} obs=7680 conv=osync status=none
+	${DD} if=boot2.ld of=${.TARGET} obs=7680 conv=osync
 
 boot2.ld: boot2.ldr boot2.bin ${BTXKERN}
 	btxld -v -E ${ORG2} -f bin -b ${BTXKERN} -l boot2.ldr \
 	    -o ${.TARGET} -P 1 boot2.bin
 
 boot2.ldr:
-	dd if=/dev/zero of=${.TARGET} bs=512 count=1 status=none
+	${DD} if=/dev/zero of=${.TARGET} bs=512 count=1
 
 boot2.bin: boot2.out
 	${OBJCOPY} -S -O binary boot2.out ${.TARGET}

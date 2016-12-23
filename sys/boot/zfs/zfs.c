@@ -450,7 +450,7 @@ zfs_probe_partition(void *arg, const char *partname,
 	/* Probe only freebsd-zfs and freebsd partitions */
 	if (part->type != PART_FREEBSD &&
 	    part->type != PART_FREEBSD_ZFS)
-		return 0;
+		return (0);
 
 	ppa = (struct zfs_probe_args *)arg;
 	strncpy(devname, ppa->devname, strlen(ppa->devname) - 1);
@@ -458,10 +458,10 @@ zfs_probe_partition(void *arg, const char *partname,
 	sprintf(devname, "%s%s:", devname, partname);
 	pa.fd = open(devname, O_RDONLY);
 	if (pa.fd == -1)
-		return 0;
+		return (0);
 	ret = zfs_probe(pa.fd, ppa->pool_guid);
 	if (ret == 0)
-		return 0;
+		return (0);
 	/* Do we have BSD label here? */
 	if (part->type == PART_FREEBSD) {
 		pa.devname = devname;
@@ -470,12 +470,12 @@ zfs_probe_partition(void *arg, const char *partname,
 		table = ptable_open(&pa, part->end - part->start + 1,
 		    ppa->secsz, zfs_diskread);
 		if (table != NULL) {
-			ret = ptable_iterate(table, &pa, zfs_probe_partition);
+			ptable_iterate(table, &pa, zfs_probe_partition);
 			ptable_close(table);
 		}
 	}
 	close(pa.fd);
-	return (ret);
+	return (0);
 }
 
 int
@@ -514,20 +514,30 @@ zfs_probe_dev(const char *devname, uint64_t *pool_guid)
 /*
  * Print information about ZFS pools
  */
-static void
+static int
 zfs_dev_print(int verbose)
 {
 	spa_t *spa;
 	char line[80];
+	int ret = 0;
+
+	if (STAILQ_EMPTY(&zfs_pools))
+		return (0);
+
+	printf("%s devices:", zfs_dev.dv_name);
+	if ((ret = pager_output("\n")) != 0)
+		return (ret);
 
 	if (verbose) {
-		spa_all_status();
-		return;
+		return (spa_all_status());
 	}
 	STAILQ_FOREACH(spa, &zfs_pools, spa_link) {
-		sprintf(line, "    zfs:%s\n", spa->spa_name);
-		pager_output(line);
+		snprintf(line, sizeof(line), "    zfs:%s\n", spa->spa_name);
+		ret = pager_output(line);
+		if (ret != 0)
+			break;
 	}
+	return (ret);
 }
 
 /*
@@ -801,7 +811,7 @@ zfs_bootenv(const char *name)
 }
 
 int
-zfs_belist_add(const char *name)
+zfs_belist_add(const char *name, uint64_t value __unused)
 {
 
 	/* Skip special datasets that start with a $ character */

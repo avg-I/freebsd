@@ -6,7 +6,7 @@ SEARCH_DIR("/usr/lib");
 SECTIONS
 {
   /* Read-only sections, merged into text segment: */
-  kernphys = CONSTANT (MAXPAGESIZE);
+  kernphys = 0x200000;
   . = kernbase + kernphys + SIZEOF_HEADERS;
   /*
    * Use the AT keyword in order to set the right LMA that contains
@@ -149,7 +149,6 @@ SECTIONS
   {
     *(.data .data.* .gnu.linkonce.d.*)
     KEEP (*(.gnu.linkonce.d.*personality*))
-    SORT(CONSTRUCTORS)
   }
   .data1          : { *(.data1) }
   _edata = .; PROVIDE (edata = .);

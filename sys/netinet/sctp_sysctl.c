@@ -279,15 +279,6 @@ sctp_sysctl_copy_out_local_addresses(struct sctp_inpcb *inp, struct sctp_tcb *st
 						if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) {
 							if (local_scope == 0)
 								continue;
-							if (sin6->sin6_scope_id == 0) {
-								/*
-								 * bad link
-								 * local
-								 * address
-								 */
-								if (sa6_recoverscope(sin6) != 0)
-									continue;
-							}
 						}
 						if ((site_scope == 0) && (IN6_IS_ADDR_SITELOCAL(&sin6->sin6_addr)))
 							continue;
@@ -652,12 +643,10 @@ static int
 sctp_sysctl_handle_stats(SYSCTL_HANDLER_ARGS)
 {
 	int error;
-
 #if defined(SMP) && defined(SCTP_USE_PERCPU_STAT)
 	struct sctpstat *sarry;
 	struct sctpstat sb;
 	int cpu;
-
 #endif
 	struct sctpstat sb_temp;
 
@@ -837,7 +826,6 @@ sctp_sysctl_handle_trace_log_clear(SYSCTL_HANDLER_ARGS)
 	memset(&SCTP_BASE_SYSCTL(sctp_log), 0, sizeof(struct sctp_log));
 	return (error);
 }
-
 #endif
 
 #define SCTP_UINT_SYSCTL(mib_name, var_name, prefix)			\

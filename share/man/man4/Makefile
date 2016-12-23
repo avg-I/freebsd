@@ -53,6 +53,7 @@ MAN=	aac.4 \
 	${_aout.4} \
 	${_apic.4} \
 	arcmsr.4 \
+	${_armv8crypto.4} \
 	${_asmc.4} \
 	ata.4 \
 	ath.4 \
@@ -79,11 +80,13 @@ MAN=	aac.4 \
 	bhndb.4 \
 	bktr.4 \
 	blackhole.4 \
+	bnxt.4 \
 	bpf.4 \
 	bridge.4 \
 	bt.4 \
 	bwi.4 \
 	bwn.4 \
+	${_bytgpio.4} \
 	capsicum.4 \
 	cardbus.4 \
 	carp.4 \
@@ -113,6 +116,7 @@ MAN=	aac.4 \
 	cue.4 \
 	cxgb.4 \
 	cxgbe.4 \
+	cxgbev.4 \
 	cy.4 \
 	cyapa.4 \
 	da.4 \
@@ -122,7 +126,6 @@ MAN=	aac.4 \
 	ddb.4 \
 	de.4 \
 	devctl.4 \
-	digi.4 \
 	disc.4 \
 	divert.4 \
 	${_dpms.4} \
@@ -186,12 +189,12 @@ MAN=	aac.4 \
 	${_hptmv.4} \
 	${_hptnr.4} \
 	${_hptrr.4} \
-	hv_ata_pci_disengage.4 \
-	hv_kvp.4 \
-	hv_netvsc.4 \
-	hv_storvsc.4 \
-	hv_utils.4 \
-	hv_vmbus.4 \
+	${_hv_kvp.4} \
+	${_hv_netvsc.4} \
+	${_hv_storvsc.4} \
+	${_hv_utils.4} \
+	${_hv_vmbus.4} \
+	${_hv_vss.4} \
 	hwpmc.4 \
 	ichsmb.4 \
 	${_ichwd.4} \
@@ -271,7 +274,6 @@ MAN=	aac.4 \
 	mac_stub.4 \
 	mac_test.4 \
 	malo.4 \
-	mcd.4 \
 	md.4 \
 	mdio.4 \
 	me.4 \
@@ -282,6 +284,7 @@ MAN=	aac.4 \
 	mk48txx.4 \
 	mld.4 \
 	mlx.4 \
+	mlx4en.4 \
 	mlx5en.4 \
 	mly.4 \
 	mmc.4 \
@@ -376,7 +379,9 @@ MAN=	aac.4 \
 	ng_vlan.4 \
 	nmdm.4 \
 	nsp.4 \
-	${_ntb.4} \
+	${_ntb_hw.4} \
+	${_ntb_transport.4} \
+	${_if_ntb.4} \
 	null.4 \
 	numa.4 \
 	${_nvd.4} \
@@ -433,6 +438,7 @@ MAN=	aac.4 \
 	rp.4 \
 	rtwn.4 \
 	rtwnfw.4 \
+	rtwn_pci.4 \
 	rue.4 \
 	rum.4 \
 	run.4 \
@@ -442,7 +448,6 @@ MAN=	aac.4 \
 	sbp.4 \
 	sbp_targ.4 \
 	scc.4 \
-	scd.4 \
 	sched_4bsd.4 \
 	sched_ule.4 \
 	screen.4 \
@@ -455,7 +460,6 @@ MAN=	aac.4 \
 	sf.4 \
 	${_sfxge.4} \
 	sge.4 \
-	si.4 \
 	siba.4 \
 	siftr.4 \
 	siis.4 \
@@ -499,7 +503,6 @@ MAN=	aac.4 \
 	snd_via82c686.4 \
 	snd_vibes.4 \
 	snp.4 \
-	spic.4 \
 	${_spkr.4} \
 	splash.4 \
 	sppp.4 \
@@ -593,6 +596,7 @@ MLINKS+=bce.4 if_bce.4
 MLINKS+=bfe.4 if_bfe.4
 MLINKS+=bge.4 if_bge.4
 MLINKS+=bktr.4 brooktree.4
+MLINKS+=bnxt.4 if_bnxt.4
 MLINKS+=bridge.4 if_bridge.4
 MLINKS+=bwi.4 if_bwi.4
 MLINKS+=bwn.4 if_bwn.4
@@ -605,8 +609,21 @@ MLINKS+=crypto.4 cryptodev.4
 MLINKS+=cue.4 if_cue.4
 MLINKS+=cxgb.4 if_cxgb.4
 MLINKS+=cxgbe.4 if_cxgbe.4 \
+	cxgbe.4 vcxgbe.4 \
+	cxgbe.4 if_vcxgbe.4 \
 	cxgbe.4 cxl.4 \
-	cxgbe.4 if_cxl.4
+	cxgbe.4 if_cxl.4 \
+	cxgbe.4 vcxl.4 \
+	cxgbe.4 if_vcxl.4 \
+	cxgbe.4 cc.4 \
+	cxgbe.4 if_cc.4 \
+	cxgbe.4 vcc.4 \
+	cxgbe.4 if_vcc.4
+MLINKS+=cxgbev.4 if_cxgbev.4 \
+	cxgbev.4 cxlv.4 \
+	cxgbev.4 if_cxlv.4 \
+	cxgbev.4 ccv.4 \
+	cxgbev.4 if_ccv.4
 MLINKS+=dc.4 if_dc.4
 MLINKS+=de.4 if_de.4
 MLINKS+=disc.4 if_disc.4
@@ -680,8 +697,7 @@ MLINKS+=netintro.4 net.4 \
 	netintro.4 networking.4
 MLINKS+=${_nfe.4} ${_if_nfe.4}
 MLINKS+=nge.4 if_nge.4
-MLINKS+=${_ntb.4} ${_if_ntb.4} \
-	${_ntb.4} ${_ntb_hw.4}
+MLINKS+=${_ntb_hw.4} ${_ntb.4}
 MLINKS+=${_nxge.4} ${_if_nxge.4}
 MLINKS+=ow.4 onewire.4
 MLINKS+=patm.4 if_patm.4
@@ -693,6 +709,8 @@ MLINKS+=pms.4 pmspcv.4
 MLINKS+=ral.4 if_ral.4
 MLINKS+=re.4 if_re.4
 MLINKS+=rl.4 if_rl.4
+MLINKS+=rtwn.4 if_rtwn.4
+MLINKS+=rtwn_pci.4 if_rtwn_pci.4
 MLINKS+=rue.4 if_rue.4
 MLINKS+=rum.4 if_rum.4
 MLINKS+=run.4 if_run.4
@@ -742,6 +760,10 @@ MLINKS+=xe.4 if_xe.4
 MLINKS+=xl.4 if_xl.4
 MLINKS+=zyd.4 if_zyd.4
 
+.if ${MACHINE_CPUARCH} == "aarch64"
+_armv8crypto.4=	armv8crypto.4
+.endif
+
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "i386"
 _acpi_asus.4=	acpi_asus.4
 _acpi_asus_wmi.4=	acpi_asus_wmi.4
@@ -765,6 +787,7 @@ _amdsmb.4=	amdsmb.4
 _amdtemp.4=	amdtemp.4
 _asmc.4=	asmc.4
 _bxe.4=		bxe.4
+_bytgpio.4=	bytgpio.4
 _coretemp.4=	coretemp.4
 _cpuctl.4=	cpuctl.4
 _dpms.4=	dpms.4
@@ -773,6 +796,12 @@ _hptiop.4=	hptiop.4
 _hptmv.4=	hptmv.4
 _hptnr.4=	hptnr.4
 _hptrr.4=	hptrr.4
+_hv_kvp.4=	hv_kvp.4
+_hv_netvsc.4=	hv_netvsc.4
+_hv_storvsc.4=	hv_storvsc.4
+_hv_utils.4=	hv_utils.4
+_hv_vmbus.4=	hv_vmbus.4
+_hv_vss.4=	hv_vss.4
 _i8254.4=	i8254.4
 _ichwd.4=	ichwd.4
 _if_bxe.4=	if_bxe.4
@@ -823,6 +852,7 @@ _if_ntb.4=	if_ntb.4
 _ioat.4=	ioat.4
 _ntb.4=		ntb.4
 _ntb_hw.4=	ntb_hw.4
+_ntb_transport.4=ntb_transport.4
 _qlxge.4=	qlxge.4
 _qlxgb.4=	qlxgb.4
 _qlxgbe.4=	qlxgbe.4
@@ -887,6 +917,7 @@ MAN+=	\
 	otusfw.4 \
 	rsu.4 \
 	rsufw.4 \
+	rtwn_usb.4 \
 	u3g.4 \
 	uark.4 \
 	uart.4 \
@@ -929,8 +960,6 @@ MAN+=	\
 	urio.4 \
 	urndis.4 \
 	${_urtw.4} \
-	urtwn.4 \
-	urtwnfw.4 \
 	usb.4 \
 	usb_quirk.4 \
 	usb_template.4 \
@@ -942,6 +971,7 @@ MAN+=	\
 
 MLINKS+=otus.4 if_otus.4
 MLINKS+=rsu.4 if_rsu.4
+MLINKS+=rtwn_usb.4 if_rtwn_usb.4
 MLINKS+=u3g.4 u3gstub.4
 MLINKS+=uath.4 if_uath.4
 MLINKS+=udav.4 if_udav.4
@@ -949,7 +979,6 @@ MLINKS+=upgt.4 if_upgt.4
 MLINKS+=ural.4 if_ural.4
 MLINKS+=urndis.4 if_urndis.4
 MLINKS+=${_urtw.4} ${_if_urtw.4}
-MLINKS+=urtwn.4 if_urtwn.4
 .endif
 
 .include <bsd.prog.mk>

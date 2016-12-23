@@ -47,7 +47,7 @@ static int efipart_realstrategy(void *, int, daddr_t, size_t, size_t, char *,
     size_t *);
 static int efipart_open(struct open_file *, ...);
 static int efipart_close(struct open_file *);
-static void efipart_print(int);
+static int efipart_print(int);
 
 struct devsw efipart_dev = {
 	.dv_name = "part",
@@ -82,7 +82,7 @@ efipart_init(void)
 	EFI_HANDLE *hin, *hout, *aliases, handle;
 	EFI_STATUS status;
 	UINTN sz;
-	u_int n, nin, nout;
+	u_int n, nin, nout, nrdisk;
 	int err;
 
 	sz = 0;
@@ -103,6 +103,7 @@ efipart_init(void)
 	hout = hin + nin;
 	aliases = hout + nin;
 	nout = 0;
+	nrdisk = 0;
 
 	bzero(aliases, nin * sizeof(EFI_HANDLE));
 	pdinfo = malloc(nin * sizeof(*pdinfo));
@@ -120,8 +121,7 @@ efipart_init(void)
 		if (EFI_ERROR(status))
 			continue;
 		if (!blkio->Media->LogicalPartition) {
-			printf("%s%d isn't a logical partition, skipping\n",
-			    efipart_dev.dv_name, n);
+			nrdisk++;
 			continue;
 		}
 
@@ -156,10 +156,13 @@ efipart_init(void)
 	bcache_add_dev(npdinfo);
 	err = efi_register_handles(&efipart_dev, hout, aliases, nout);
 	free(hin);
+
+	if (nout == 0 && nrdisk > 0)
+		printf("Found %d disk(s) but no logical partition\n", nrdisk);
 	return (err);
 }
 
-static void
+static int
 efipart_print(int verbose)
 {
 	char line[80];
@@ -167,28 +170,33 @@ efipart_print(int verbose)
 	EFI_HANDLE h;
 	EFI_STATUS status;
 	u_int unit;
+	int ret = 0;
 
-	pager_open();
+	printf("%s devices:", efipart_dev.dv_name);
+	if ((ret = pager_output("\n")) != 0)
+		return (ret);
+
 	for (unit = 0, h = efi_find_handle(&efipart_dev, 0);
 	    h != NULL; h = efi_find_handle(&efipart_dev, ++unit)) {
-		sprintf(line, "    %s%d:", efipart_dev.dv_name, unit);
-		if (pager_output(line))
+		snprintf(line, sizeof(line), "    %s%d:",
+		    efipart_dev.dv_name, unit);
+		if ((ret = pager_output(line)) != 0)
 			break;
 
 		status = BS->HandleProtocol(h, &blkio_guid, (void **)&blkio);
 		if (!EFI_ERROR(status)) {
-			sprintf(line, "    %llu blocks",
+			snprintf(line, sizeof(line), "    %llu blocks",
 			    (unsigned long long)(blkio->Media->LastBlock + 1));
-			if (pager_output(line))
+			if ((ret = pager_output(line)) != 0)
 				break;
 			if (blkio->Media->RemovableMedia)
-				if (pager_output(" (removable)"))
+				if ((ret = pager_output(" (removable)")) != 0)
 					break;
 		}
-		if (pager_output("\n"))
+		if ((ret = pager_output("\n")) != 0)
 			break;
 	}
-	pager_close();
+	return (ret);
 }
 
 static int

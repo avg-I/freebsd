@@ -2716,11 +2716,6 @@ printathie(const char *tag, const u_int8_t *ie, size_t ielen, int maxlen)
 static void
 printmeshconf(const char *tag, const uint8_t *ie, size_t ielen, int maxlen)
 {
-#define MATCHOUI(field, oui, string)					\
-do {									\
-	if (memcmp(field, oui, 4) == 0)					\
-		printf("%s", string);					\
-} while (0)
 
 	printf("%s", tag);
 	if (verbose) {
@@ -2754,7 +2749,6 @@ do {									\
 		printf(" FORM:0x%x CAPS:0x%x>", mconf->conf_form,
 		    mconf->conf_cap);
 	}
-#undef MATCHOUI
 }
 
 static void
@@ -3290,8 +3284,8 @@ printmimo(const struct ieee80211_mimo_info *mi)
 	/* NB: don't muddy display unless there's something to show */
 	if (mi->rssi[0] != 0 || mi->rssi[1] != 0 || mi->rssi[2] != 0) {
 		/* XXX ignore EVM for now */
-		printf(" (rssi %d:%d:%d nf %d:%d:%d)",
-		    mi->rssi[0], mi->rssi[1], mi->rssi[2],
+		printf(" (rssi %.1f:%.1f:%.1f nf %d:%d:%d)",
+		    mi->rssi[0] / 2.0, mi->rssi[1] / 2.0, mi->rssi[2] / 2.0,
 		    mi->noise[0], mi->noise[1], mi->noise[2]);
 	}
 }
@@ -3311,7 +3305,7 @@ list_scan(int s)
 
 	getchaninfo(s);
 
-	ssidmax = verbose ? IEEE80211_NWID_LEN - 1 : 14;
+	ssidmax = verbose ? IEEE80211_NWID_LEN : 14;
 	printf("%-*.*s  %-17.17s  %4s %4s   %-7s  %3s %4s\n"
 		, ssidmax, ssidmax, "SSID/MESH ID"
 		, "BSSID"
@@ -3790,12 +3784,6 @@ static void
 list_keys(int s)
 {
 }
-
-#define	IEEE80211_C_BITS \
-	"\20\1STA\002803ENCAP\7FF\10TURBOP\11IBSS\12PMGT" \
-	"\13HOSTAP\14AHDEMO\15SWRETRY\16TXPMGT\17SHSLOT\20SHPREAMBLE" \
-	"\21MONITOR\22DFS\23MBSS\30WPA1\31WPA2\32BURST\33WME\34WDS\36BGSCAN" \
-	"\37TXFRAG\40TDMA"
 
 static void
 list_capabilities(int s)

@@ -271,7 +271,7 @@ vnet_lagg_uninit(const void *unused __unused)
 	if_clone_detach(V_lagg_cloner);
 	LAGG_LIST_LOCK_DESTROY();
 }
-VNET_SYSUNINIT(vnet_lagg_uninit, SI_SUB_PROTO_IFATTACHDOMAIN, SI_ORDER_ANY,
+VNET_SYSUNINIT(vnet_lagg_uninit, SI_SUB_INIT_IF, SI_ORDER_ANY,
     vnet_lagg_uninit, NULL);
 
 static int
@@ -1022,7 +1022,7 @@ lagg_port_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	return (error);
 
 fallback:
-	if (lp->lp_ioctl != NULL)
+	if (lp != NULL && lp->lp_ioctl != NULL)
 		return ((*lp->lp_ioctl)(ifp, cmd, data));
 
 	return (EINVAL);

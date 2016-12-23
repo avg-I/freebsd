@@ -125,6 +125,10 @@ static int setup_xattrs(struct archive_read_disk *,
     struct archive_entry *, int *fd);
 static int setup_sparse(struct archive_read_disk *,
     struct archive_entry *, int *fd);
+#if defined(HAVE_LINUX_FIEMAP_H)
+static int setup_sparse_fiemap(struct archive_read_disk *,
+    struct archive_entry *, int *fd);
+#endif
 
 int
 archive_read_disk_entry_from_file(struct archive *_a,
@@ -411,20 +415,38 @@ setup_acls(struct archive_read_disk *a,
 {
 	const char	*accpath;
 	acl_t		 acl;
-#if HAVE_ACL_IS_TRIVIAL_NP
 	int		r;
-#endif
 
 	accpath = archive_entry_sourcepath(entry);
 	if (accpath == NULL)
 		accpath = archive_entry_pathname(entry);
 
+	if (*fd < 0 && a->tree != NULL) {
+		if (a->follow_symlinks ||
+		    archive_entry_filetype(entry) != AE_IFLNK)
+			*fd = a->open_on_current_dir(a->tree,
+			    accpath, O_RDONLY | O_NONBLOCK);
+		if (*fd < 0) {
+			if (a->tree_enter_working_dir(a->tree) != 0) {
+				archive_set_error(&a->archive, errno,
+				    "Couldn't access %s", accpath);
+				return (ARCHIVE_FAILED);
+			}
+		}
+	}
+
 	archive_entry_acl_clear(entry);
+
+	acl = NULL;
 
 #ifdef ACL_TYPE_NFS4
 	/* Try NFS4 ACL first. */
 	if (*fd >= 0)
+#if HAVE_ACL_GET_FD_NP
+		acl = acl_get_fd_np(*fd, ACL_TYPE_NFS4);
+#else
 		acl = acl_get_fd(*fd);
+#endif
 #if HAVE_ACL_GET_LINK_NP
 	else if (!a->follow_symlinks)
 		acl = acl_get_link_np(accpath, ACL_TYPE_NFS4);
@@ -437,20 +459,31 @@ setup_acls(struct archive_read_disk *a,
 #endif
 	else
 		acl = acl_get_file(accpath, ACL_TYPE_NFS4);
+
 #if HAVE_ACL_IS_TRIVIAL_NP
-	/* Ignore "trivial" ACLs that just mirror the file mode. */
-	acl_is_trivial_np(acl, &r);
-	if (r) {
-		acl_free(acl);
-		acl = NULL;
+	if (acl != NULL && acl_is_trivial_np(acl, &r) == 0) {
+		/* Ignore "trivial" ACLs that just mirror the file mode. */
+		if (r) {
+			acl_free(acl);
+			acl = NULL;
+			/*
+			 * Simultaneous NFSv4 and POSIX.1e ACLs for the same
+			 * entry are not allowed, so we should return here
+			 */
+			return (ARCHIVE_OK);
+		}
 	}
 #endif
 	if (acl != NULL) {
-		translate_acl(a, entry, acl, ARCHIVE_ENTRY_ACL_TYPE_NFS4);
+		r = translate_acl(a, entry, acl, ARCHIVE_ENTRY_ACL_TYPE_NFS4);
 		acl_free(acl);
-		return (ARCHIVE_OK);
+		if (r != ARCHIVE_OK) {
+			archive_set_error(&a->archive, errno,
+			    "Couldn't translate NFSv4 ACLs: %s", accpath);
+		}
+		return (r);
 	}
-#endif
+#endif	/* ACL_TYPE_NFS4 */
 
 	/* Retrieve access ACL from file. */
 	if (*fd >= 0)
@@ -467,19 +500,42 @@ setup_acls(struct archive_read_disk *a,
 #endif
 	else
 		acl = acl_get_file(accpath, ACL_TYPE_ACCESS);
+
+#if HAVE_ACL_IS_TRIVIAL_NP
+	/* Ignore "trivial" ACLs that just mirror the file mode. */
+	if (acl != NULL && acl_is_trivial_np(acl, &r) == 0) {
+		if (r) {
+			acl_free(acl);
+			acl = NULL;
+		}
+	}
+#endif
+
 	if (acl != NULL) {
-		translate_acl(a, entry, acl,
+		r = translate_acl(a, entry, acl,
 		    ARCHIVE_ENTRY_ACL_TYPE_ACCESS);
 		acl_free(acl);
+		acl = NULL;
+		if (r != ARCHIVE_OK) {
+			archive_set_error(&a->archive, errno,
+			    "Couldn't translate access ACLs: %s", accpath);
+			return (r);
+		}
 	}
 
 	/* Only directories can have default ACLs. */
 	if (S_ISDIR(archive_entry_mode(entry))) {
 		acl = acl_get_file(accpath, ACL_TYPE_DEFAULT);
 		if (acl != NULL) {
-			translate_acl(a, entry, acl,
+			r = translate_acl(a, entry, acl,
 			    ARCHIVE_ENTRY_ACL_TYPE_DEFAULT);
 			acl_free(acl);
+			if (r != ARCHIVE_OK) {
+				archive_set_error(&a->archive, errno,
+				    "Couldn't translate default ACLs: %s",
+				    accpath);
+				return (r);
+			}
 		}
 	}
 	return (ARCHIVE_OK);
@@ -535,19 +591,23 @@ translate_acl(struct archive_read_disk *a,
 #ifdef ACL_TYPE_NFS4
 	acl_entry_type_t acl_type;
 	acl_flagset_t	 acl_flagset;
-	int brand, r;
+	int brand;
 #endif
 	acl_entry_t	 acl_entry;
 	acl_permset_t	 acl_permset;
 	int		 i, entry_acl_type;
-	int		 s, ae_id, ae_tag, ae_perm;
+	int		 r, s, ae_id, ae_tag, ae_perm;
 	const char	*ae_name;
 
 #ifdef ACL_TYPE_NFS4
 	// FreeBSD "brands" ACLs as POSIX.1e or NFSv4
 	// Make sure the "brand" on this ACL is consistent
 	// with the default_entry_acl_type bits provided.
-	acl_get_brand_np(acl, &brand);
+	if (acl_get_brand_np(acl, &brand) != 0) {
+		archive_set_error(&a->archive, errno,
+		    "Failed to read ACL brand");
+		return (ARCHIVE_WARN);
+	}
 	switch (brand) {
 	case ACL_BRAND_POSIX:
 		switch (default_entry_acl_type) {
@@ -555,31 +615,42 @@ translate_acl(struct archive_read_disk *a,
 		case ARCHIVE_ENTRY_ACL_TYPE_DEFAULT:
 			break;
 		default:
-			// XXX set warning message?
-			return ARCHIVE_FAILED;
+			archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+			    "Invalid ACL entry type for POSIX.1e ACL");
+			return (ARCHIVE_WARN);
 		}
 		break;
 	case ACL_BRAND_NFS4:
 		if (default_entry_acl_type & ~ARCHIVE_ENTRY_ACL_TYPE_NFS4) {
-			// XXX set warning message?
-			return ARCHIVE_FAILED;
+			archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+			    "Invalid ACL entry type for NFSv4 ACL");
+			return (ARCHIVE_WARN);
 		}
 		break;
 	default:
-		// XXX set warning message?
-		return ARCHIVE_FAILED;
-		break;
+		archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+		    "Unknown ACL brand");
+		return (ARCHIVE_WARN);
 	}
 #endif
 
 
 	s = acl_get_entry(acl, ACL_FIRST_ENTRY, &acl_entry);
+	if (s == -1) {
+		archive_set_error(&a->archive, errno,
+		    "Failed to get first ACL entry");
+		return (ARCHIVE_WARN);
+	}
 	while (s == 1) {
 		ae_id = -1;
 		ae_name = NULL;
 		ae_perm = 0;
 
-		acl_get_tag_type(acl_entry, &acl_tag);
+		if (acl_get_tag_type(acl_entry, &acl_tag) != 0) {
+			archive_set_error(&a->archive, errno,
+			    "Failed to get ACL tag type");
+			return (ARCHIVE_WARN);
+		}
 		switch (acl_tag) {
 		case ACL_USER:
 			ae_id = (int)*(uid_t *)acl_get_qualifier(acl_entry);
@@ -614,13 +685,18 @@ translate_acl(struct archive_read_disk *a,
 			continue;
 		}
 
-		// XXX acl type maps to allow/deny/audit/YYYY bits
-		// XXX acl_get_entry_type_np on FreeBSD returns EINVAL for
-		// non-NFSv4 ACLs
+		// XXX acl_type maps to allow/deny/audit/YYYY bits
 		entry_acl_type = default_entry_acl_type;
 #ifdef ACL_TYPE_NFS4
-		r = acl_get_entry_type_np(acl_entry, &acl_type);
-		if (r == 0) {
+		if (default_entry_acl_type & ARCHIVE_ENTRY_ACL_TYPE_NFS4) {
+			/*
+			 * acl_get_entry_type_np() fails with non-NFSv4 ACLs
+			 */
+			if (acl_get_entry_type_np(acl_entry, &acl_type) != 0) {
+				archive_set_error(&a->archive, errno, "Failed "
+				    "to get ACL type from a NFSv4 ACL entry");
+				return (ARCHIVE_WARN);
+			}
 			switch (acl_type) {
 			case ACL_ENTRY_TYPE_ALLOW:
 				entry_acl_type = ARCHIVE_ENTRY_ACL_TYPE_ALLOW;
@@ -634,29 +710,53 @@ translate_acl(struct archive_read_disk *a,
 			case ACL_ENTRY_TYPE_ALARM:
 				entry_acl_type = ARCHIVE_ENTRY_ACL_TYPE_ALARM;
 				break;
+			default:
+				archive_set_error(&a->archive, errno,
+				    "Invalid NFSv4 ACL entry type");
+				return (ARCHIVE_WARN);
 			}
+
+			/*
+			 * Libarchive stores "flag" (NFSv4 inheritance bits)
+			 * in the ae_perm bitmap.
+			 *
+			 * acl_get_flagset_np() fails with non-NFSv4 ACLs
+			 */
+			if (acl_get_flagset_np(acl_entry, &acl_flagset) != 0) {
+				archive_set_error(&a->archive, errno,
+				    "Failed to get flagset from a NFSv4 ACL entry");
+				return (ARCHIVE_WARN);
+			}
+	                for (i = 0; i < (int)(sizeof(acl_inherit_map) / sizeof(acl_inherit_map[0])); ++i) {
+				r = acl_get_flag_np(acl_flagset,
+				    acl_inherit_map[i].platform_inherit);
+				if (r == -1) {
+					archive_set_error(&a->archive, errno,
+					    "Failed to check flag in a NFSv4 "
+					    "ACL flagset");
+					return (ARCHIVE_WARN);
+				} else if (r)
+					ae_perm |= acl_inherit_map[i].archive_inherit;
+                	}
 		}
-
-		/*
-		 * Libarchive stores "flag" (NFSv4 inheritance bits)
-		 * in the ae_perm bitmap.
-		 */
-		acl_get_flagset_np(acl_entry, &acl_flagset);
-                for (i = 0; i < (int)(sizeof(acl_inherit_map) / sizeof(acl_inherit_map[0])); ++i) {
-			if (acl_get_flag_np(acl_flagset,
-					    acl_inherit_map[i].platform_inherit))
-				ae_perm |= acl_inherit_map[i].archive_inherit;
-
-                }
 #endif
 
-		acl_get_permset(acl_entry, &acl_permset);
+		if (acl_get_permset(acl_entry, &acl_permset) != 0) {
+			archive_set_error(&a->archive, errno,
+			    "Failed to get ACL permission set");
+			return (ARCHIVE_WARN);
+		}
 		for (i = 0; i < (int)(sizeof(acl_perm_map) / sizeof(acl_perm_map[0])); ++i) {
 			/*
 			 * acl_get_perm() is spelled differently on different
 			 * platforms; see above.
 			 */
-			if (ACL_GET_PERM(acl_permset, acl_perm_map[i].platform_perm))
+			r = ACL_GET_PERM(acl_permset, acl_perm_map[i].platform_perm);
+			if (r == -1) {
+				archive_set_error(&a->archive, errno,
+				    "Failed to check permission in an ACL permission set");
+				return (ARCHIVE_WARN);
+			} else if (r)
 				ae_perm |= acl_perm_map[i].archive_perm;
 		}
 
@@ -665,6 +765,11 @@ translate_acl(struct archive_read_disk *a,
 					    ae_id, ae_name);
 
 		s = acl_get_entry(acl, ACL_NEXT_ENTRY, &acl_entry);
+		if (s == -1) {
+			archive_set_error(&a->archive, errno,
+			    "Failed to get next ACL entry");
+			return (ARCHIVE_WARN);
+		}
 	}
 	return (ARCHIVE_OK);
 }
@@ -1023,7 +1128,7 @@ setup_xattrs(struct archive_read_disk *a,
 #if defined(HAVE_LINUX_FIEMAP_H)
 
 /*
- * Linux sparse interface.
+ * Linux FIEMAP sparse interface.
  *
  * The FIEMAP ioctl returns an "extent" for each physical allocation
  * on disk.  We need to process those to generate a more compact list
@@ -1038,7 +1143,7 @@ setup_xattrs(struct archive_read_disk *a,
  */
 
 static int
-setup_sparse(struct archive_read_disk *a,
+setup_sparse_fiemap(struct archive_read_disk *a,
     struct archive_entry *entry, int *fd)
 {
 	char buff[4096];
@@ -1089,8 +1194,8 @@ setup_sparse(struct archive_read_disk *a,
 		if (r < 0) {
 			/* When something error happens, it is better we
 			 * should return ARCHIVE_OK because an earlier
-			 * version(<2.6.28) cannot perfom FS_IOC_FIEMAP. */
-			goto exit_setup_sparse;
+			 * version(<2.6.28) cannot perform FS_IOC_FIEMAP. */
+			goto exit_setup_sparse_fiemap;
 		}
 		if (fm->fm_mapped_extents == 0) {
 			if (iters == 0) {
@@ -1125,14 +1230,24 @@ setup_sparse(struct archive_read_disk *a,
 		} else
 			break;
 	}
-exit_setup_sparse:
+exit_setup_sparse_fiemap:
 	return (exit_sts);
 }
 
-#elif defined(SEEK_HOLE) && defined(SEEK_DATA) && defined(_PC_MIN_HOLE_SIZE)
+#if !defined(SEEK_HOLE) || !defined(SEEK_DATA)
+static int
+setup_sparse(struct archive_read_disk *a,
+    struct archive_entry *entry, int *fd)
+{
+	return setup_sparse_fiemap(a, entry, fd);
+}
+#endif
+#endif	/* defined(HAVE_LINUX_FIEMAP_H) */
+
+#if defined(SEEK_HOLE) && defined(SEEK_DATA)
 
 /*
- * FreeBSD and Solaris sparse interface.
+ * SEEK_HOLE sparse interface (FreeBSD, Linux, Solaris)
  */
 
 static int
@@ -1140,8 +1255,8 @@ setup_sparse(struct archive_read_disk *a,
     struct archive_entry *entry, int *fd)
 {
 	int64_t size;
-	off_t initial_off; /* FreeBSD/Solaris only, so off_t okay here */
-	off_t off_s, off_e; /* FreeBSD/Solaris only, so off_t okay here */
+	off_t initial_off;
+	off_t off_s, off_e;
 	int exit_sts = ARCHIVE_OK;
 	int check_fully_sparse = 0;
 
@@ -1167,8 +1282,10 @@ setup_sparse(struct archive_read_disk *a,
 	}
 
 	if (*fd >= 0) {
+#ifdef _PC_MIN_HOLE_SIZE
 		if (fpathconf(*fd, _PC_MIN_HOLE_SIZE) <= 0)
 			return (ARCHIVE_OK);
+#endif
 		initial_off = lseek(*fd, 0, SEEK_CUR);
 		if (initial_off != 0)
 			lseek(*fd, 0, SEEK_SET);
@@ -1179,8 +1296,10 @@ setup_sparse(struct archive_read_disk *a,
 		if (path == NULL)
 			path = archive_entry_pathname(entry);
 			
+#ifdef _PC_MIN_HOLE_SIZE
 		if (pathconf(path, _PC_MIN_HOLE_SIZE) <= 0)
 			return (ARCHIVE_OK);
+#endif
 		*fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 		if (*fd < 0) {
 			archive_set_error(&a->archive, errno,
@@ -1190,6 +1309,19 @@ setup_sparse(struct archive_read_disk *a,
 		__archive_ensure_cloexec_flag(*fd);
 		initial_off = 0;
 	}
+
+#ifndef _PC_MIN_HOLE_SIZE
+	/* Check if the underlying filesystem supports seek hole */
+	off_s = lseek(*fd, 0, SEEK_HOLE);
+	if (off_s < 0)
+#if defined(HAVE_LINUX_FIEMAP_H)
+		return setup_sparse_fiemap(a, entry, fd);
+#else
+		goto exit_setup_sparse;
+#endif
+	else if (off_s > 0)
+		lseek(*fd, 0, SEEK_SET);
+#endif
 
 	off_s = 0;
 	size = archive_entry_size(entry);
@@ -1222,7 +1354,7 @@ setup_sparse(struct archive_read_disk *a,
 			goto exit_setup_sparse;
 		}
 		if (off_s == 0 && off_e == size)
-			break;/* This is not spase. */
+			break;/* This is not sparse. */
 		archive_entry_sparse_add_entry(entry, off_s,
 			off_e - off_s);
 		off_s = off_e;
@@ -1240,7 +1372,7 @@ exit_setup_sparse:
 	return (exit_sts);
 }
 
-#else
+#elif !defined(HAVE_LINUX_FIEMAP_H)
 
 /*
  * Generic (stub) sparse support.

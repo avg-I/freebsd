@@ -527,7 +527,7 @@ write_archive(struct archive *a, struct bsdtar *bsdtar)
 		struct archive *disk = bsdtar->diskreader;
 
 		/*
-		 * This tricky code here is to correctly read the cotents
+		 * This tricky code here is to correctly read the contents
 		 * of the entry because the disk reader bsdtar->diskreader
 		 * is pointing at does not have any information about the
 		 * entry by this time and using archive_read_data_block()
@@ -884,8 +884,10 @@ write_hierarchy(struct bsdtar *bsdtar, struct archive *a, const char *path)
 		else if (r != ARCHIVE_OK) {
 			lafe_warnc(archive_errno(disk),
 			    "%s", archive_error_string(disk));
-			if (r == ARCHIVE_FATAL) {
+			if (r == ARCHIVE_FATAL || r == ARCHIVE_FAILED) {
 				bsdtar->return_value = 1;
+				archive_entry_free(entry);
+				archive_read_close(disk);
 				return;
 			} else if (r < ARCHIVE_WARN)
 				continue;

@@ -104,29 +104,43 @@ test_fuzz(const struct files *filesets)
 			}
 			if (!assert(size < buffsize)) {
 				free(rawimage);
+				rawimage = NULL;
 				continue;
 			}
 		} else {
 			for (i = 0; filesets[n].names[i] != NULL; ++i)
 			{
 				tmp = slurpfile(&size, filesets[n].names[i]);
-				rawimage = (char *)realloc(rawimage, oldsize + size);
+				char *newraw = realloc(rawimage, oldsize + size);
+				if (!assert(newraw != NULL))
+				{
+					free(rawimage);
+					rawimage = NULL;
+					free(tmp);
+					continue;
+				}
+				rawimage = newraw;
 				memcpy(rawimage + oldsize, tmp, size);
 				oldsize += size;
 				size = oldsize;
 				free(tmp);
-				if (!assert(rawimage != NULL))
-					continue;
 			}
 		}
-		if (size == 0)
+		if (size == 0) {
+			free(rawimage);
+			rawimage = NULL;
 			continue;
+		}
 		image = malloc(size);
 		assert(image != NULL);
 		if (image == NULL) {
 			free(rawimage);
+			rawimage = NULL;
 			return;
 		}
+
+		assert(rawimage != NULL);
+
 		srand((unsigned)time(NULL));
 
 		for (i = 0; i < 1000; ++i) {
@@ -158,6 +172,7 @@ test_fuzz(const struct files *filesets)
 				Sleep(100);
 #endif
 			}
+			assert(f != NULL);
 			assertEqualInt((size_t)size, fwrite(image, 1, (size_t)size, f));
 			fclose(f);
 
@@ -191,7 +206,7 @@ test_fuzz(const struct files *filesets)
 				archive_read_close(a);
 			}
 			archive_read_free(a);
-}
+		}
 		free(image);
 		free(rawimage);
 	}
