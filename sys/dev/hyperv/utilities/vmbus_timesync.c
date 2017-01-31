@@ -48,9 +48,11 @@ __FBSDID("$FreeBSD$");
 #define VMBUS_TIMESYNC_MSGVER		\
 	VMBUS_IC_VERSION(VMBUS_TIMESYNC_MSGVER_MAJOR, 0)
 
+#define VMBUS_TIMESYNC_MSGVER4(sc)	\
+	VMBUS_ICVER_LE(VMBUS_IC_VERSION(4, 0), (sc)->ic_msgver)
+
 #define VMBUS_TIMESYNC_DORTT(sc)	\
-	((sc)->ic_msgver >= VMBUS_IC_VERSION(4, 0) && \
-	 (hyperv_features & CPUID_HV_MSR_TIME_REFCNT))
+	(VMBUS_TIMESYNC_MSGVER4((sc)) && hyperv_tc64 != NULL)
 
 static int			vmbus_timesync_probe(device_t);
 static int			vmbus_timesync_attach(device_t);
@@ -114,7 +116,7 @@ vmbus_timesync(struct vmbus_ic_softc *sc, uint64_t hvtime, uint64_t sent_tc,
 	uint64_t hv_ns, vm_ns, rtt = 0;
 
 	if (VMBUS_TIMESYNC_DORTT(sc))
-		rtt = rdmsr(MSR_HV_TIME_REF_COUNT) - sent_tc;
+		rtt = hyperv_tc64() - sent_tc;
 
 	hv_ns = (hvtime - VMBUS_ICMSG_TS_BASE + rtt) * HYPERV_TIMER_NS_FACTOR;
 	nanotime(&vm_ts);
@@ -136,7 +138,7 @@ vmbus_timesync(struct vmbus_ic_softc *sc, uint64_t hvtime, uint64_t sent_tc,
 	}
 
 	if ((tsflags & VMBUS_ICMSG_TS_FLAG_SAMPLE) &&
-	    vmbus_ts_sample_thresh > 0) {
+	    vmbus_ts_sample_thresh >= 0) {
 		int64_t diff;
 
 		if (vmbus_ts_sample_verbose) {
@@ -174,7 +176,6 @@ vmbus_timesync_cb(struct vmbus_channel *chan, void *xsc)
 {
 	struct vmbus_ic_softc *sc = xsc;
 	struct vmbus_icmsg_hdr *hdr;
-	const struct vmbus_icmsg_timesync *msg;
 	int dlen, error;
 	uint64_t xactid;
 	void *data;
@@ -209,14 +210,28 @@ vmbus_timesync_cb(struct vmbus_channel *chan, void *xsc)
 		break;
 
 	case VMBUS_ICMSG_TYPE_TIMESYNC:
-		if (dlen < sizeof(*msg)) {
-			device_printf(sc->ic_dev, "invalid timesync len %d\n",
-			    dlen);
-			return;
+		if (VMBUS_TIMESYNC_MSGVER4(sc)) {
+			const struct vmbus_icmsg_timesync4 *msg4;
+
+			if (dlen < sizeof(*msg4)) {
+				device_printf(sc->ic_dev, "invalid timesync4 "
+				    "len %d\n", dlen);
+				return;
+			}
+			msg4 = data;
+			vmbus_timesync(sc, msg4->ic_hvtime, msg4->ic_sent_tc,
+			    msg4->ic_tsflags);
+		} else {
+			const struct vmbus_icmsg_timesync *msg;
+
+			if (dlen < sizeof(*msg)) {
+				device_printf(sc->ic_dev, "invalid timesync "
+				    "len %d\n", dlen);
+				return;
+			}
+			msg = data;
+			vmbus_timesync(sc, msg->ic_hvtime, 0, msg->ic_tsflags);
 		}
-		msg = data;
-		vmbus_timesync(sc, msg->ic_hvtime, msg->ic_sent_tc,
-		    msg->ic_tsflags);
 		break;
 
 	default:

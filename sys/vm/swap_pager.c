@@ -410,7 +410,7 @@ static daddr_t	swp_pager_getswapspace(int npages);
  */
 static struct swblock **swp_pager_hash(vm_object_t object, vm_pindex_t index);
 static void swp_pager_meta_build(vm_object_t, vm_pindex_t, daddr_t);
-static void swp_pager_meta_free(vm_object_t, vm_pindex_t, daddr_t);
+static void swp_pager_meta_free(vm_object_t, vm_pindex_t, vm_pindex_t);
 static void swp_pager_meta_free_all(vm_object_t);
 static daddr_t swp_pager_meta_ctl(vm_object_t, vm_pindex_t, int);
 
@@ -1632,6 +1632,13 @@ swap_pager_isswapped(vm_object_t object, struct swdevt *sp)
 	return (0);
 }
 
+int
+swap_pager_nswapdev(void)
+{
+
+	return (nswapdev);
+}
+
 /*
  * SWP_PAGER_FORCE_PAGEIN() - force a swap block to be paged in
  *
@@ -1750,6 +1757,7 @@ restart:
 		pause("swpoff", hz / 20);
 		goto full_rescan;
 	}
+	EVENTHANDLER_INVOKE(swapoff, sp);
 }
 
 /************************************************************************
@@ -1869,42 +1877,42 @@ done:
  *	with resident pages.
  */
 static void
-swp_pager_meta_free(vm_object_t object, vm_pindex_t index, daddr_t count)
+swp_pager_meta_free(vm_object_t object, vm_pindex_t index, vm_pindex_t count)
 {
+	struct swblock **pswap, *swap;
+	vm_pindex_t c;
+	daddr_t v;
+	int n, sidx;
 
 	VM_OBJECT_ASSERT_LOCKED(object);
-	if (object->type != OBJT_SWAP)
+	if (object->type != OBJT_SWAP || count == 0)
 		return;
 
-	while (count > 0) {
-		struct swblock **pswap;
-		struct swblock *swap;
-
-		mtx_lock(&swhash_mtx);
+	mtx_lock(&swhash_mtx);
+	for (c = 0; c < count;) {
 		pswap = swp_pager_hash(object, index);
-
-		if ((swap = *pswap) != NULL) {
-			daddr_t v = swap->swb_pages[index & SWAP_META_MASK];
-
-			if (v != SWAPBLK_NONE) {
-				swp_pager_freeswapspace(v, 1);
-				swap->swb_pages[index & SWAP_META_MASK] =
-					SWAPBLK_NONE;
-				if (--swap->swb_count == 0) {
-					*pswap = swap->swb_hnext;
-					uma_zfree(swap_zone, swap);
-					--object->un_pager.swp.swp_bcount;
-				}
-			}
-			--count;
-			++index;
-		} else {
-			int n = SWAP_META_PAGES - (index & SWAP_META_MASK);
-			count -= n;
-			index += n;
+		sidx = index & SWAP_META_MASK;
+		n = SWAP_META_PAGES - sidx;
+		index += n;
+		if ((swap = *pswap) == NULL) {
+			c += n;
+			continue;
 		}
-		mtx_unlock(&swhash_mtx);
+		for (; c < count && sidx < SWAP_META_PAGES; ++c, ++sidx) {
+			if ((v = swap->swb_pages[sidx]) == SWAPBLK_NONE)
+				continue;
+			swp_pager_freeswapspace(v, 1);
+			swap->swb_pages[sidx] = SWAPBLK_NONE;
+			if (--swap->swb_count == 0) {
+				*pswap = swap->swb_hnext;
+				uma_zfree(swap_zone, swap);
+				--object->un_pager.swp.swp_bcount;
+				c += SWAP_META_PAGES - sidx;
+				break;
+			}
+		}
 	}
+	mtx_unlock(&swhash_mtx);
 }
 
 /*
@@ -2209,6 +2217,7 @@ swaponsomething(struct vnode *vp, void *id, u_long nblks,
 	swapon_check_swzone(swap_total / PAGE_SIZE);
 	swp_sizecheck();
 	mtx_unlock(&sw_dev_mtx);
+	EVENTHANDLER_INVOKE(swapon, sp);
 }
 
 /*
