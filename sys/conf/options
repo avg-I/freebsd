@@ -426,9 +426,10 @@ IPFIREWALL_NAT64_DIRECT_OUTPUT	opt_ipfw.h
 IPFIREWALL_NPTV6	opt_ipfw.h
 IPFIREWALL_VERBOSE	opt_ipfw.h
 IPFIREWALL_VERBOSE_LIMIT	opt_ipfw.h
+IPFIREWALL_PMOD		opt_ipfw.h
 IPSEC			opt_ipsec.h
 IPSEC_DEBUG		opt_ipsec.h
-IPSEC_NAT_T		opt_ipsec.h
+IPSEC_SUPPORT		opt_ipsec.h
 IPSTEALTH
 KRPC
 LIBALIAS
@@ -451,7 +452,7 @@ TCP_HHOOK		opt_inet.h
 TCP_OFFLOAD		opt_inet.h # Enable code to dispatch TCP offloading
 TCP_RFC7413		opt_inet.h
 TCP_RFC7413_MAX_KEYS	opt_inet.h
-TCP_SIGNATURE		opt_inet.h
+TCP_SIGNATURE		opt_ipsec.h
 VLAN_ARRAY		opt_vlan.h
 XBONEHACK
 FLOWTABLE		opt_route.h
@@ -551,10 +552,6 @@ DRM_DEBUG		opt_drm.h
 
 TI_SF_BUF_JUMBO		opt_ti.h
 TI_JUMBO_HDRSPLIT	opt_ti.h
-
-# XXX Conflict: # of devices vs network protocol (Native ATM).
-# This makes "atm.h" unusable.
-NATM
 
 # DPT driver debug flags
 DPT_MEASURE_PERFORMANCE	opt_dpt.h
@@ -690,7 +687,7 @@ INIT_PATH
 
 ROOTDEVNAME
 
-FDC_DEBUG		opt_fdc.h
+FDC_DEBUG 		opt_fdc.h
 PCFCLOCK_VERBOSE	opt_pcfclock.h
 PCFCLOCK_MAX_RETRIES	opt_pcfclock.h
 
@@ -723,7 +720,6 @@ ISAPNP			opt_isa.h
 # various 'device presence' options.
 DEV_BPF			opt_bpf.h
 DEV_CARP		opt_carp.h
-DEV_MCA			opt_mca.h
 DEV_NETMAP		opt_global.h
 DEV_PCI			opt_pci.h
 DEV_PF			opt_pf.h
@@ -732,10 +728,6 @@ DEV_PFSYNC		opt_pf.h
 DEV_RANDOM		opt_global.h
 DEV_SPLASH		opt_splash.h
 DEV_VLAN		opt_vlan.h
-
-# EISA support
-DEV_EISA		opt_eisa.h
-EISA_SLOTS		opt_eisa.h
 
 # ed driver
 ED_HPP			opt_ed.h

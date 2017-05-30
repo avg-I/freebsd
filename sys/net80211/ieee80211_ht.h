@@ -177,8 +177,7 @@ struct ieee80211_mcs_rates {
 	uint16_t	ht40_rate_400ns;
 };
 extern const struct ieee80211_mcs_rates ieee80211_htrates[];
-const struct ieee80211_htrateset *ieee80211_get_suphtrates(
-		struct ieee80211com *, const struct ieee80211_channel *);
+void	ieee80211_init_suphtrates(struct ieee80211com *);
 
 struct ieee80211_node;
 int	ieee80211_setup_htrates(struct ieee80211_node *,
@@ -186,7 +185,8 @@ int	ieee80211_setup_htrates(struct ieee80211_node *,
 void	ieee80211_setup_basic_htrates(struct ieee80211_node *,
 		const uint8_t *htinfo);
 struct mbuf *ieee80211_decap_amsdu(struct ieee80211_node *, struct mbuf *);
-int	ieee80211_ampdu_reorder(struct ieee80211_node *, struct mbuf *);
+int	ieee80211_ampdu_reorder(struct ieee80211_node *, struct mbuf *,
+	    const struct ieee80211_rx_stats *);
 void	ieee80211_recv_bar(struct ieee80211_node *, struct mbuf *);
 void	ieee80211_ht_node_init(struct ieee80211_node *);
 void	ieee80211_ht_node_cleanup(struct ieee80211_node *);

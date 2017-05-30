@@ -78,6 +78,19 @@ MK_CLANG_BOOTSTRAP=	no
 MK_GCC_BOOTSTRAP=	no
 .endif
 
+MAKEOBJDIRPREFIX?=	/usr/obj
+.if ${MACHINE} == ${TARGET} && ${MACHINE_ARCH} == ${TARGET_ARCH} && !defined(CROSS_BUILD_TESTING)
+OBJTREE=	${MAKEOBJDIRPREFIX}
+.else
+OBJTREE=	${MAKEOBJDIRPREFIX}/${TARGET}.${TARGET_ARCH}
+.endif
+
+# Pull in compiler metadata from buildworld/toolchain if possible to avoid
+# running CC from bsd.compiler.mk.
+.if make(installworld) || make(install)
+.-include "${OBJTREE}${.CURDIR}/compiler-metadata.mk"
+.endif
+
 # Pull in COMPILER_TYPE and COMPILER_FREEBSD_VERSION early.
 .include <bsd.compiler.mk>
 .include "share/mk/src.opts.mk"
@@ -135,7 +148,8 @@ TEST_SYSTEM_COMPILER_VARS= \
 	MK_CROSS_COMPILER MK_CLANG_BOOTSTRAP MK_GCC_BOOTSTRAP \
 	WANT_COMPILER_TYPE WANT_COMPILER_VERSION WANT_COMPILER_VERSION_FILE \
 	WANT_COMPILER_FREEBSD_VERSION WANT_COMPILER_FREEBSD_VERSION_FILE \
-	CC COMPILER_TYPE COMPILER_VERSION COMPILER_FREEBSD_VERSION
+	CC COMPILER_TYPE COMPILER_FEATURES COMPILER_VERSION \
+	COMPILER_FREEBSD_VERSION
 test-system-compiler: .PHONY
 .for v in ${TEST_SYSTEM_COMPILER_VARS}
 	${_+_}@printf "%-35s= %s\n" "${v}" "${${v}}"
@@ -153,13 +167,29 @@ test-system-compiler: .PHONY
 .if !defined(X_COMPILER_TYPE)
 CROSSENV+=	COMPILER_VERSION=${COMPILER_VERSION} \
 		COMPILER_TYPE=${COMPILER_TYPE} \
+		COMPILER_FEATURES=${COMPILER_FEATURES} \
 		COMPILER_FREEBSD_VERSION=${COMPILER_FREEBSD_VERSION}
 .else
 CROSSENV+=	COMPILER_VERSION=${X_COMPILER_VERSION} \
+		COMPILER_FEATURES=${X_COMPILER_FEATURES} \
 		COMPILER_TYPE=${X_COMPILER_TYPE} \
 		COMPILER_FREEBSD_VERSION=${X_COMPILER_FREEBSD_VERSION}
 .endif
 .endif
+# Store some compiler metadata for use in installworld where we don't
+# want to invoke CC at all.
+_COMPILER_METADATA_VARS=	COMPILER_VERSION \
+				COMPILER_TYPE \
+				COMPILER_FEATURES \
+				COMPILER_FREEBSD_VERSION
+compiler-metadata.mk: .PHONY .META
+	@: > ${.TARGET}
+	@echo ".info Using cached compiler metadata from build at $$(hostname) on $$(date)" \
+	    > ${.TARGET}
+.for v in ${_COMPILER_METADATA_VARS}
+	@echo "${v}=${${v}}" >> ${.TARGET}
+.endfor
+	@echo ".export ${_COMPILER_METADATA_VARS}" >> ${.TARGET}
 
 # Handle external binutils.
 .if defined(CROSS_TOOLCHAIN_PREFIX)
@@ -167,10 +197,11 @@ CROSS_BINUTILS_PREFIX?=${CROSS_TOOLCHAIN_PREFIX}
 .endif
 # If we do not have a bootstrap binutils (because the in-tree one does not
 # support the target architecture), provide a default cross-binutils prefix.
-# This allows aarch64 builds, for example, to automatically use the
-# aarch64-binutils port or package.
+# This allows riscv64 builds, for example, to automatically use the
+# riscv64-binutils port or package.
 .if !make(showconfig)
 .if !empty(BROKEN_OPTIONS:MBINUTILS_BOOTSTRAP) && \
+    ${MK_LLD_BOOTSTRAP} == "no" && \
     !defined(CROSS_BINUTILS_PREFIX)
 CROSS_BINUTILS_PREFIX=/usr/local/${TARGET_ARCH}-freebsd/bin/
 .if !exists(${CROSS_BINUTILS_PREFIX})
@@ -242,13 +273,11 @@ SUBDIR+=	${_DIR}
 # of a LOCAL_DIRS directory.  This allows LOCAL_DIRS=foo and
 # LOCAL_LIB_DIRS=foo/lib to behave as expected.
 .for _DIR in ${LOCAL_DIRS:M*/} ${LOCAL_DIRS:N*/:S|$|/|}
-_REDUNDENT_LIB_DIRS+=    ${LOCAL_LIB_DIRS:M${_DIR}*}
+_REDUNDANT_LIB_DIRS+=    ${LOCAL_LIB_DIRS:M${_DIR}*}
 .endfor
 .for _DIR in ${LOCAL_LIB_DIRS}
-.if empty(_REDUNDENT_LIB_DIRS:M${_DIR}) && exists(${.CURDIR}/${_DIR}/Makefile)
+.if empty(_REDUNDANT_LIB_DIRS:M${_DIR}) && exists(${.CURDIR}/${_DIR}/Makefile)
 SUBDIR+=	${_DIR}
-.else
-.warning ${_DIR} not added to SUBDIR list.  See UPDATING 20141121.
 .endif
 .endfor
 
@@ -273,6 +302,11 @@ CLEANDIR=	clean cleandepend
 CLEANDIR=	cleandir
 .endif
 
+.if defined(WORLDFAST)
+NO_CLEAN=	t
+NO_OBJ=		t
+.endif
+
 .if ${MK_META_MODE} == "yes"
 # If filemon is used then we can rely on the build being incremental-safe.
 # The .meta files will also track the build command and rebuild should
@@ -280,6 +314,13 @@ CLEANDIR=	cleandir
 .if empty(.MAKE.MODE:Mnofilemon)
 NO_CLEAN=	t
 .endif
+.endif
+.if defined(NO_OBJ) || ${MK_AUTO_OBJ} == "yes"
+NO_OBJ=		t
+NO_KERNELOBJ=	t
+.endif
+.if !defined(NO_OBJ)
+_obj=		obj
 .endif
 
 LOCAL_TOOL_DIRS?=
@@ -302,7 +343,6 @@ SVN=   ${_P}/${_S}
 .endif
 SVNFLAGS?=	-r HEAD
 
-MAKEOBJDIRPREFIX?=	/usr/obj
 .if !defined(OSRELDATE)
 .if exists(/usr/include/osreldate.h)
 OSRELDATE!=	awk '/^\#define[[:space:]]*__FreeBSD_version/ { print $$3 }' \
@@ -399,11 +439,6 @@ BUILD_ARCH!=	uname -p
 .error To cross-build, set TARGET_ARCH.
 .endif
 .endif
-.if ${MACHINE} == ${TARGET} && ${MACHINE_ARCH} == ${TARGET_ARCH} && !defined(CROSS_BUILD_TESTING)
-OBJTREE=	${MAKEOBJDIRPREFIX}
-.else
-OBJTREE=	${MAKEOBJDIRPREFIX}/${TARGET}.${TARGET_ARCH}
-.endif
 WORLDTMP=	${OBJTREE}${.CURDIR}/tmp
 BPATH=		${WORLDTMP}/legacy/usr/sbin:${WORLDTMP}/legacy/usr/bin:${WORLDTMP}/legacy/bin
 XPATH=		${WORLDTMP}/usr/sbin:${WORLDTMP}/usr/bin
@@ -468,12 +503,7 @@ CROSSENV+=	MAKEOBJDIRPREFIX=${OBJTREE} \
 		CPUTYPE=${TARGET_CPUTYPE}
 .if ${MK_META_MODE} != "no"
 # Don't rebuild build-tools targets during normal build.
-CROSSENV+=	BUILD_TOOLS_META=.NOMETA_CMP
-.endif
-.if ${MK_GROFF} != "no"
-CROSSENV+=	GROFF_BIN_PATH=${WORLDTMP}/legacy/usr/bin \
-		GROFF_FONT_PATH=${WORLDTMP}/legacy/usr/share/groff_font \
-		GROFF_TMAC_PATH=${WORLDTMP}/legacy/usr/share/tmac
+CROSSENV+=	BUILD_TOOLS_META=.NOMETA
 .endif
 .if defined(TARGET_CFLAGS)
 CROSSENV+=	${TARGET_CFLAGS}
@@ -515,7 +545,7 @@ TMAKE=		MAKEOBJDIRPREFIX=${OBJTREE} \
 # cross-tools stage
 XMAKE=		TOOLS_PREFIX=${WORLDTMP} ${BMAKE} \
 		TARGET=${TARGET} TARGET_ARCH=${TARGET_ARCH} \
-		MK_GDB=no MK_TESTS=no MK_LLD_IS_LD=no
+		MK_GDB=no MK_TESTS=no
 
 # kernel-tools stage
 KTMAKEENV=	INSTALL="sh ${.CURDIR}/tools/install.sh" \
@@ -605,7 +635,7 @@ XCFLAGS+=	${BFLAGS}
 .endif
 
 .if ${MK_LIB32} != "no" && (${TARGET_ARCH} == "amd64" || \
-    ${TARGET_ARCH} == "powerpc64") || ${TARGET_ARCH:Mmips64*} != ""
+    ${TARGET_ARCH} == "powerpc64" || ${TARGET_ARCH:Mmips64*} != "")
 LIBCOMPAT= 32
 .include "Makefile.libcompat"
 .elif ${MK_LIBSOFT} != "no" && ${TARGET_ARCH} == "armv6"
@@ -677,16 +707,39 @@ _worldtmp: .PHONY
 .else
 	rm -rf ${WORLDTMP}/legacy/usr/include
 .endif
+# Dependencies cannot cope with certain source tree changes, particularly
+# with respect to removing source files and replacing generated files.
+# Handle these cases here in an ad-hoc fashion.
+# 20160829 remove stale dependencies for ptrace stub, rewritten in C
+# in r305012
+.for f in ptrace
+.if exists(${OBJTREE}${.CURDIR}/lib/libc/.depend.${f}.o)
+	@if egrep -q '/${f}.[sS]' \
+	    ${OBJTREE}${.CURDIR}/lib/libc/.depend.${f}.o; then \
+		echo Removing stale dependencies for ${f} syscall wrappers; \
+		rm -f ${OBJTREE}${.CURDIR}/lib/libc/.depend.${f}.* \
+		   ${OBJTREE}${.CURDIR}/world32/${.CURDIR}/lib/libc/.depend.${f}.*; \
+	fi
+.endif
+.endfor
+# 20170523 remove stale generated asm files for functions which are no longer
+# syscalls after r302092 (pipe) and r318736 (others)
+.for f in getdents lstat mknod pipe stat
+.if exists(${OBJTREE}${.CURDIR}/lib/libc/${f}.s) || \
+    exists(${OBJTREE}${.CURDIR}/lib/libc/${f}.S)
+	@echo Removing stale generated ${f} syscall files
+	@rm -f ${OBJTREE}${.CURDIR}/lib/libc/${f}.* \
+	    ${OBJTREE}${.CURDIR}/lib/libc/.depend.${f}.* \
+	    ${OBJTREE}${.CURDIR}/world32/${.CURDIR}/lib/libc/${f}.* \
+	    ${OBJTREE}${.CURDIR}/world32/${.CURDIR}/lib/libc/.depend.${f}.*
+.endif
+.endfor
 .for _dir in \
     lib lib/casper usr legacy/bin legacy/usr
 	mkdir -p ${WORLDTMP}/${_dir}
 .endfor
 	mtree -deU -f ${.CURDIR}/etc/mtree/BSD.usr.dist \
 	    -p ${WORLDTMP}/legacy/usr >/dev/null
-.if ${MK_GROFF} != "no"
-	mtree -deU -f ${.CURDIR}/etc/mtree/BSD.groff.dist \
-	    -p ${WORLDTMP}/legacy/usr >/dev/null
-.endif
 	mtree -deU -f ${.CURDIR}/etc/mtree/BSD.include.dist \
 	    -p ${WORLDTMP}/legacy/usr/include >/dev/null
 	mtree -deU -f ${.CURDIR}/etc/mtree/BSD.usr.dist \
@@ -764,8 +817,15 @@ _cross-tools:
 	@echo "--------------------------------------------------------------"
 	@echo ">>> stage 3: cross tools"
 	@echo "--------------------------------------------------------------"
+	@rm -f ${.OBJDIR}/compiler-metadata.mk
 	${_+_}cd ${.CURDIR}; ${XMAKE} cross-tools
 	${_+_}cd ${.CURDIR}; ${XMAKE} kernel-tools
+_compiler-metadata:
+	@echo
+	@echo "--------------------------------------------------------------"
+	@echo ">>> stage 3.1: recording compiler metadata"
+	@echo "--------------------------------------------------------------"
+	${_+_}cd ${.CURDIR}; ${WMAKE} compiler-metadata.mk
 _includes:
 	@echo
 	@echo "--------------------------------------------------------------"
@@ -794,12 +854,22 @@ everything: .PHONY
 	${_+_}cd ${.CURDIR}; _PARALLEL_SUBDIR_OK=1 ${WMAKE} all
 
 WMAKE_TGTS=
+.if !defined(WORLDFAST)
 WMAKE_TGTS+=	_worldtmp _legacy
 .if empty(SUBDIR_OVERRIDE)
 WMAKE_TGTS+=	_bootstrap-tools
 .endif
-WMAKE_TGTS+=	_cleanobj _obj _build-tools _cross-tools
-WMAKE_TGTS+=	_includes _libraries
+WMAKE_TGTS+=	_cleanobj
+.if !defined(NO_OBJ)
+WMAKE_TGTS+=	_obj
+.endif
+WMAKE_TGTS+=	_build-tools _cross-tools
+WMAKE_TGTS+=	_compiler-metadata
+WMAKE_TGTS+=	_includes
+.endif
+.if !defined(NO_LIBS)
+WMAKE_TGTS+=	_libraries
+.endif
 WMAKE_TGTS+=	everything
 .if defined(LIBCOMPAT) && empty(SUBDIR_OVERRIDE)
 WMAKE_TGTS+=	build${libcompat}
@@ -1491,8 +1561,8 @@ sign-packages:	_pkgbootstrap .PHONY
 		-o ${REPODIR}/$$(${PKG_CMD} -o ABI_FILE=${WSTAGEDIR}/bin/sh config ABI)/${PKG_VERSION} \
 		${REPODIR}/$$(${PKG_CMD} -o ABI_FILE=${WSTAGEDIR}/bin/sh config ABI)/${PKG_VERSION} \
 		${PKGSIGNKEY} ; \
-	ln -s ${REPODIR}/$$(${PKG_CMD} -o ABI_FILE=${WSTAGEDIR}/bin/sh config ABI)/${PKG_VERSION} \
-		${REPODIR}/$$(${PKG_CMD} -o ABI_FILE=${WSTAGEDIR}/bin/sh config ABI)/latest
+	cd ${REPODIR}/$$(${PKG_CMD} -o ABI_FILE=${WSTAGEDIR}/bin/sh config ABI); \
+	ln -s ${PKG_VERSION} latest
 
 #
 #
@@ -1501,11 +1571,11 @@ sign-packages:	_pkgbootstrap .PHONY
 # Run test suite on installed world.
 #
 checkworld: .PHONY
-	@if [ ! -x ${LOCALBASE}/bin/kyua ]; then \
+	@if [ ! -x "${LOCALBASE}/bin/kyua" ]; then \
 		echo "You need kyua (devel/kyua) to run the test suite." | /usr/bin/fmt; \
 		exit 1; \
 	fi
-	${_+_}${LOCALBASE}/bin/kyua test -k ${TESTSBASE}/Kyuafile
+	${_+_}PATH="$$PATH:${LOCALBASE}/bin" kyua test -k ${TESTSBASE}/Kyuafile
 
 #
 #
@@ -1514,7 +1584,7 @@ checkworld: .PHONY
 # Build the API documentation with doxygen
 #
 doxygen: .PHONY
-	@if [ ! -x ${LOCALBASE}/bin/doxygen ]; then \
+	@if [ ! -x "${LOCALBASE}/bin/doxygen" ]; then \
 		echo "You need doxygen (devel/doxygen) to generate the API documentation of the kernel." | /usr/bin/fmt; \
 		exit 1; \
 	fi
@@ -1579,7 +1649,7 @@ legacy: .PHONY
 .for _tool in tools/build ${_elftoolchain_libs}
 	${_+_}@${ECHODIR} "===> ${_tool} (obj,includes,all,install)"; \
 	    cd ${.CURDIR}/${_tool}; \
-	    ${MAKE} DIRPRFX=${_tool}/ obj; \
+	    if [ -z "${NO_OBJ}" ]; then ${MAKE} DIRPRFX=${_tool}/ obj; fi; \
 	    ${MAKE} DIRPRFX=${_tool}/ DESTDIR=${MAKEOBJDIRPREFIX}/legacy includes; \
 	    ${MAKE} DIRPRFX=${_tool}/ MK_INCLUDES=no all; \
 	    ${MAKE} DIRPRFX=${_tool}/ MK_INCLUDES=no \
@@ -1602,11 +1672,6 @@ _strfile=	usr.bin/fortune/strfile
 _gperf=		gnu/usr.bin/gperf
 .endif
 
-.if ${MK_SHAREDOCS} != "no" && ${MK_GROFF} != "no"
-_groff=		gnu/usr.bin/groff \
-		usr.bin/soelim
-.endif
-
 .if ${MK_VT} != "no"
 _vtfontcvt=	usr.bin/vtfontcvt
 .endif
@@ -1620,13 +1685,18 @@ ${_bt}-usr.bin/m4: ${_bt}-lib/libopenbsd
 ${_bt}-usr.bin/lex: ${_bt}-usr.bin/m4
 .endif
 
-.if ${BOOTSTRAPPING} < 1000026
-_nmtree=	lib/libnetbsd \
+# r245440 mtree -N support added
+# r313404 requires sha384.h for libnetbsd, added to libmd in r292782
+.if ${BOOTSTRAPPING} < 1100093
+_nmtree=	lib/libmd \
+		lib/libnetbsd \
 		usr.sbin/nmtree
 
+${_bt}-lib/libnetbsd: ${_bt}-lib/libmd
 ${_bt}-usr.sbin/nmtree: ${_bt}-lib/libnetbsd
 .endif
 
+# r246097: log addition login.conf.db, passwd, pwd.db, and spwd.db with cat -l
 .if ${BOOTSTRAPPING} < 1000027
 _cat=		bin/cat
 .endif
@@ -1661,9 +1731,10 @@ ${_bt}-usr.bin/yacc: ${_bt}-lib/liby
 _gensnmptree=	usr.sbin/bsnmpd/gensnmptree
 .endif
 
-# We need to build tblgen when we're building clang either as
-# the bootstrap compiler, or as the part of the normal build.
-.if ${MK_CLANG_BOOTSTRAP} != "no" || ${MK_CLANG} != "no"
+# We need to build tblgen when we're building clang or lld, either as
+# bootstrap tools, or as the part of the normal build.
+.if ${MK_CLANG_BOOTSTRAP} != "no" || ${MK_CLANG} != "no" || \
+    ${MK_LLD_BOOTSTRAP} != "no" || ${MK_LLD} != "no"
 _clang_tblgen= \
 	lib/clang/libllvmminimal \
 	usr.bin/clang/llvm-tblgen \
@@ -1693,11 +1764,9 @@ _kerberos5_bootstrap_tools= \
 .endif
 
 # r283777 makewhatis(1) replaced with mandoc version which builds a database.
-.if ${MK_MANDOCDB} != "no"
 _libopenbsd?=	lib/libopenbsd
 _makewhatis=	usr.bin/mandoc
 ${_bt}-usr.bin/mandoc: ${_bt}-lib/libopenbsd
-.endif
 
 bootstrap-tools: .PHONY
 
@@ -1709,7 +1778,6 @@ bootstrap-tools: .PHONY
     ${_kerberos5_bootstrap_tools} \
     ${_strfile} \
     ${_gperf} \
-    ${_groff} \
     ${_dtc} \
     ${_cat} \
     ${_kbdcontrol} \
@@ -1731,7 +1799,7 @@ bootstrap-tools: .PHONY
 ${_bt}-${_tool}: .PHONY .MAKE
 	${_+_}@${ECHODIR} "===> ${_tool} (obj,all,install)"; \
 		cd ${.CURDIR}/${_tool}; \
-		${MAKE} DIRPRFX=${_tool}/ obj; \
+		if [ -z "${NO_OBJ}" ]; then ${MAKE} DIRPRFX=${_tool}/ obj; fi; \
 		${MAKE} DIRPRFX=${_tool}/ all; \
 		${MAKE} DIRPRFX=${_tool}/ DESTDIR=${MAKEOBJDIRPREFIX}/legacy install
 
@@ -1770,7 +1838,7 @@ _rescue=rescue/rescue
 build-tools_${_tool}: .PHONY
 	${_+_}@${ECHODIR} "===> ${_tool} (obj,build-tools)"; \
 		cd ${.CURDIR}/${_tool}; \
-		${MAKE} DIRPRFX=${_tool}/ obj; \
+		if [ -z "${NO_OBJ}" ]; then ${MAKE} DIRPRFX=${_tool}/ obj; fi; \
 		${MAKE} DIRPRFX=${_tool}/ build-tools
 build-tools: build-tools_${_tool}
 .endfor
@@ -1779,7 +1847,7 @@ build-tools: build-tools_${_tool}
 build-tools_${_tool}: .PHONY
 	${_+_}@${ECHODIR} "===> ${_tool} (obj,all)"; \
 		cd ${.CURDIR}/${_tool}; \
-		${MAKE} DIRPRFX=${_tool}/ obj; \
+		if [ -z "${NO_OBJ}" ]; then ${MAKE} DIRPRFX=${_tool}/ obj; fi; \
 		${MAKE} DIRPRFX=${_tool}/ all
 build-tools: build-tools_${_tool}
 .endfor
@@ -1836,10 +1904,15 @@ _elftctools=	lib/libelftc \
 
 .if ${MK_CLANG_BOOTSTRAP} != "no"
 _clang=		usr.bin/clang
+.endif
+.if ${MK_LLD_BOOTSTRAP} != "no"
+_lld=		usr.bin/clang/lld
+.endif
+.if ${MK_CLANG_BOOTSTRAP} != "no" || ${MK_LLD_BOOTSTRAP} != "no"
 _clang_libs=	lib/clang
 .endif
 .if ${MK_GCC_BOOTSTRAP} != "no"
-_cc=		gnu/usr.bin/cc
+_gcc=		gnu/usr.bin/cc
 .endif
 .if ${MK_USB} != "no"
 _usb_tools=	sys/boot/usb/tools
@@ -1850,15 +1923,16 @@ cross-tools: .MAKE .PHONY
     ${LOCAL_XTOOL_DIRS} \
     ${_clang_libs} \
     ${_clang} \
+    ${_lld} \
     ${_binutils} \
     ${_elftctools} \
     ${_dtrace_tools} \
-    ${_cc} \
+    ${_gcc} \
     ${_btxld} \
     ${_usb_tools}
 	${_+_}@${ECHODIR} "===> ${_tool} (obj,all,install)"; \
 		cd ${.CURDIR}/${_tool}; \
-		${MAKE} DIRPRFX=${_tool}/ obj; \
+		if [ -z "${NO_OBJ}" ]; then ${MAKE} DIRPRFX=${_tool}/ obj; fi; \
 		${MAKE} DIRPRFX=${_tool}/ all; \
 		${MAKE} DIRPRFX=${_tool}/ DESTDIR=${MAKEOBJDIRPREFIX} install
 .endfor
@@ -1890,7 +1964,7 @@ native-xtools: .PHONY
 	mkdir -p ${OBJTREE}/gperf_for_gcc/usr/bin
 	${_+_}@${ECHODIR} "===> ${_gperf} (obj,all,install)"; \
 	cd ${.CURDIR}/${_gperf}; \
-	${NXBMAKE} DIRPRFX=${_gperf}/ obj; \
+	if [ -z "${NO_OBJ}" ]; then ${NXBMAKE} DIRPRFX=${_gperf}/ obj; fi; \
 	${NXBMAKE} DIRPRFX=${_gperf}/ all; \
 	${NXBMAKE} DIRPRFX=${_gperf}/ DESTDIR=${OBJTREE}/gperf_for_gcc install
 .endif
@@ -1925,13 +1999,13 @@ native-xtools: .PHONY
     usr.bin/ar \
     ${_binutils} \
     ${_elftctools} \
-    ${_cc} \
+    ${_gcc} \
     ${_gcc_tools} \
     ${_clang_libs} \
     ${_clang} \
     sbin/md5 \
     sbin/sysctl \
-    gnu/usr.bin/diff \
+    usr.bin/diff \
     usr.bin/awk \
     usr.bin/basename \
     usr.bin/bmake \
@@ -1950,6 +2024,7 @@ native-xtools: .PHONY
     usr.bin/mktemp \
     usr.bin/mt \
     usr.bin/patch \
+    usr.bin/readelf \
     usr.bin/sed \
     usr.bin/sort \
     usr.bin/tar \
@@ -1965,7 +2040,7 @@ native-xtools: .PHONY
     usr.sbin/chown
 	${_+_}@${ECHODIR} "===> ${_tool} (obj,all,install)"; \
 		cd ${.CURDIR}/${_tool}; \
-		${NXBMAKE} DIRPRFX=${_tool}/ obj; \
+		if [ -z "${NO_OBJ}" ]; then ${NXBMAKE} DIRPRFX=${_tool}/ obj; fi; \
 		${NXBMAKE} DIRPRFX=${_tool}/ all; \
 		${NXBMAKE} DIRPRFX=${_tool}/ DESTDIR=${NXBDESTDIR} install
 .endfor
@@ -2227,7 +2302,7 @@ ${_lib}__PL: .PHONY .MAKE
 .if exists(${.CURDIR}/${_lib})
 	${_+_}@${ECHODIR} "===> ${_lib} (obj,all,install)"; \
 		cd ${.CURDIR}/${_lib}; \
-		${MAKE} MK_TESTS=no DIRPRFX=${_lib}/ obj; \
+		if [ -z "${NO_OBJ}" ]; then ${MAKE} MK_TESTS=no DIRPRFX=${_lib}/ obj; fi; \
 		${MAKE} MK_TESTS=no MK_PROFILE=no -DNO_PIC \
 		    DIRPRFX=${_lib}/ all; \
 		${MAKE} MK_TESTS=no MK_PROFILE=no -DNO_PIC \
@@ -2240,7 +2315,7 @@ ${_lib}__L: .PHONY .MAKE
 .if exists(${.CURDIR}/${_lib})
 	${_+_}@${ECHODIR} "===> ${_lib} (obj,all,install)"; \
 		cd ${.CURDIR}/${_lib}; \
-		${MAKE} MK_TESTS=no DIRPRFX=${_lib}/ obj; \
+		if [ -z "${NO_OBJ}" ]; then ${MAKE} MK_TESTS=no DIRPRFX=${_lib}/ obj; fi; \
 		${MAKE} MK_TESTS=no DIRPRFX=${_lib}/ all; \
 		${MAKE} MK_TESTS=no DIRPRFX=${_lib}/ install
 .endif
@@ -2515,16 +2590,35 @@ CDBENV=MAKEOBJDIRPREFIX=${MAKEOBJDIRPREFIX}/${XDDIR} \
 	INSTALL="sh ${.CURDIR}/tools/install.sh"
 CDENV= ${CDBENV} \
 	TOOLS_PREFIX=${XDTP}
-CD2CFLAGS=-isystem ${XDDESTDIR}/usr/include -L${XDDESTDIR}/usr/lib \
-	--sysroot=${XDDESTDIR}/ -B${XDDESTDIR}/usr/libexec \
-	-B${XDDESTDIR}/usr/bin -B${XDDESTDIR}/usr/lib
-CD2ENV=${CDENV} CC="${CC} ${CD2CFLAGS}" CXX="${CXX} ${CD2CFLAGS}" \
+
+.if ${WANT_COMPILER_TYPE} == gcc || \
+    (defined(X_COMPILER_TYPE) && ${X_COMPILER_TYPE} == gcc)
+# GCC requires -isystem and -L when using a cross-compiler.  --sysroot
+# won't set header path and -L is used to ensure the base library path
+# is added before the port PREFIX library path.
+CD2CFLAGS+=	-isystem ${XDDESTDIR}/usr/include -L${XDDESTDIR}/usr/lib
+# GCC requires -B to find /usr/lib/crti.o when using a cross-compiler
+# combined with --sysroot.
+CD2CFLAGS+=	-B${XDDESTDIR}/usr/lib
+# Force using libc++ for external GCC.
+# XXX: This should be checking MK_GNUCXX == no
+.if ${X_COMPILER_VERSION} >= 40800
+CD2CXXFLAGS+=	-isystem ${XDDESTDIR}/usr/include/c++/v1 -std=c++11 \
+		-nostdinc++
+.endif
+.endif
+CD2CFLAGS+=	--sysroot=${XDDESTDIR}/
+CD2ENV=${CDENV} CC="${CC} ${CD2CFLAGS}" CXX="${CXX} ${CD2CXXFLAGS} ${CD2CFLAGS}" \
 	CPP="${CPP} ${CD2CFLAGS}" \
 	MACHINE=${TARGET} MACHINE_ARCH=${TARGET_ARCH}
 
 CDTMP=	${MAKEOBJDIRPREFIX}/${XDDIR}/${.CURDIR}/tmp
 CDMAKE=${CDENV} PATH=${CDTMP}/usr/bin:${PATH} ${MAKE} ${NOFUN}
 CD2MAKE=${CD2ENV} PATH=${CDTMP}/usr/bin:${XDDESTDIR}/usr/bin:${PATH} ${MAKE} ${NOFUN}
+.if ${MK_META_MODE} != "no"
+# Don't rebuild build-tools targets during normal build.
+CD2MAKE+=	BUILD_TOOLS_META=.NOMETA
+.endif
 XDDESTDIR=${DESTDIR}/${XDTP}
 .if !defined(OSREL)
 OSREL!= uname -r | sed -e 's/[-(].*//'
@@ -2544,10 +2638,11 @@ _xb-worldtmp: .PHONY
 _xb-bootstrap-tools: .PHONY
 .for _tool in \
     ${_clang_tblgen} \
-    ${_gperf}
+    ${_gperf} \
+    ${_yacc}
 	${_+_}@${ECHODIR} "===> ${_tool} (obj,all,install)"; \
 	cd ${.CURDIR}/${_tool}; \
-	${CDMAKE} DIRPRFX=${_tool}/ obj; \
+	if [ -z "${NO_OBJ}" ]; then ${CDMAKE} DIRPRFX=${_tool}/ obj; fi; \
 	${CDMAKE} DIRPRFX=${_tool}/ all; \
 	${CDMAKE} DIRPRFX=${_tool}/ DESTDIR=${CDTMP} install
 .endfor
@@ -2563,10 +2658,10 @@ _xb-cross-tools: .PHONY
     usr.bin/ar \
     ${_clang_libs} \
     ${_clang} \
-    ${_cc}
+    ${_gcc}
 	${_+_}@${ECHODIR} "===> xdev ${_tool} (obj,all)"; \
 	cd ${.CURDIR}/${_tool}; \
-	${CDMAKE} DIRPRFX=${_tool}/ obj; \
+	if [ -z "${NO_OBJ}" ]; then ${CDMAKE} DIRPRFX=${_tool}/ obj; fi; \
 	${CDMAKE} DIRPRFX=${_tool}/ all
 .endfor
 
@@ -2600,7 +2695,7 @@ _xi-cross-tools: .PHONY
     usr.bin/ar \
     ${_clang_libs} \
     ${_clang} \
-    ${_cc}
+    ${_gcc}
 	${_+_}@${ECHODIR} "===> xdev ${_tool} (install)"; \
 	cd ${.CURDIR}/${_tool}; \
 	${CDMAKE} DIRPRFX=${_tool}/ install DESTDIR=${XDDESTDIR}

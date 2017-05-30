@@ -56,11 +56,6 @@ void _free_base(void *ptr) {
 }
 
 ALLOCATION_FUNCTION_ATTRIBUTE
-void cfree(void *ptr) {
-  CHECK(!"cfree() should not be used on Windows");
-}
-
-ALLOCATION_FUNCTION_ATTRIBUTE
 void *malloc(size_t size) {
   GET_STACK_TRACE_MALLOC;
   return asan_malloc(size, &stack);
@@ -122,6 +117,11 @@ void *_recalloc(void *p, size_t n, size_t elem_size) {
   if (elem_size != 0 && size / elem_size != n)
     return 0;
   return realloc(p, size);
+}
+
+ALLOCATION_FUNCTION_ATTRIBUTE
+void *_recalloc_base(void *p, size_t n, size_t elem_size) {
+  return _recalloc(p, n, elem_size);
 }
 
 ALLOCATION_FUNCTION_ATTRIBUTE
@@ -223,6 +223,7 @@ void ReplaceSystemMalloc() {
   TryToOverrideFunction("_realloc_base", (uptr)realloc);
   TryToOverrideFunction("_realloc_crt", (uptr)realloc);
   TryToOverrideFunction("_recalloc", (uptr)_recalloc);
+  TryToOverrideFunction("_recalloc_base", (uptr)_recalloc);
   TryToOverrideFunction("_recalloc_crt", (uptr)_recalloc);
   TryToOverrideFunction("_msize", (uptr)_msize);
   TryToOverrideFunction("_expand", (uptr)_expand);

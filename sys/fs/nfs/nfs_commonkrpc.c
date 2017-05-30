@@ -13,7 +13,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -280,7 +280,8 @@ newnfs_connect(struct nfsmount *nmp, struct nfssockreq *nrp,
 				retries = nmp->nm_retry;
 		} else
 			retries = INT_MAX;
-		if (NFSHASNFSV4N(nmp)) {
+		/* cred == NULL for DS connects. */
+		if (NFSHASNFSV4N(nmp) && cred != NULL) {
 			/*
 			 * Make sure the nfscbd_pool doesn't get destroyed
 			 * while doing this.
@@ -1042,8 +1043,10 @@ tryagain:
 			/*
 			 * If this op's status is non-zero, mark
 			 * that there is no more data to process.
+			 * The exception is Setattr, which always has xdr
+			 * when it has failed.
 			 */
-			if (j)
+			if (j != 0 && i != NFSV4OP_SETATTR)
 				nd->nd_flag |= ND_NOMOREDATA;
 
 			/*

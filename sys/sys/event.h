@@ -29,7 +29,8 @@
 #ifndef _SYS_EVENT_H_
 #define _SYS_EVENT_H_
 
-#include <sys/queue.h> 
+#include <sys/_types.h>
+#include <sys/queue.h>
 
 #define EVFILT_READ		(-1)
 #define EVFILT_WRITE		(-2)
@@ -57,11 +58,11 @@
 } while(0)
 
 struct kevent {
-	uintptr_t	ident;		/* identifier for this event */
+	__uintptr_t	ident;		/* identifier for this event */
 	short		filter;		/* filter for event */
-	u_short		flags;
-	u_int		fflags;
-	intptr_t	data;
+	unsigned short	flags;
+	unsigned int	fflags;
+	__intptr_t	data;
 	void		*udata;		/* opaque user data identifier */
 };
 
@@ -172,7 +173,7 @@ struct knlist {
 #define	KNF_LISTLOCKED	0x0001			/* knlist is locked */
 #define	KNF_NOKQLOCK	0x0002			/* do not keep KQ_LOCK */
 
-#define KNOTE(list, hist, flags)	knote(list, hist, flags)
+#define KNOTE(list, hint, flags)	knote(list, hint, flags)
 #define KNOTE_LOCKED(list, hint)	knote(list, hint, KNF_LISTLOCKED)
 #define KNOTE_UNLOCKED(list, hint)	knote(list, hint, 0)
 

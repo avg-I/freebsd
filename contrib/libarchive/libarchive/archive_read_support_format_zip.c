@@ -347,7 +347,7 @@ fake_crc32(unsigned long crc, const void *buff, size_t len)
 	return 0;
 }
 
-static struct {
+static const struct {
 	int id;
 	const char * name;
 } compression_methods[] = {
@@ -452,26 +452,38 @@ process_extra(struct archive_read *a, const char *p, size_t extra_length, struct
 			/* Zip64 extended information extra field. */
 			zip_entry->flags |= LA_USED_ZIP64;
 			if (zip_entry->uncompressed_size == 0xffffffff) {
-				if (datasize < 8)
-					break;
-				zip_entry->uncompressed_size =
-				    archive_le64dec(p + offset);
+				uint64_t t = 0;
+				if (datasize < 8
+				    || (t = archive_le64dec(p + offset)) > INT64_MAX) {
+					archive_set_error(&a->archive, ARCHIVE_ERRNO_FILE_FORMAT,
+					    "Malformed 64-bit uncompressed size");
+					return ARCHIVE_FAILED;
+				}
+				zip_entry->uncompressed_size = t;
 				offset += 8;
 				datasize -= 8;
 			}
 			if (zip_entry->compressed_size == 0xffffffff) {
-				if (datasize < 8)
-					break;
-				zip_entry->compressed_size =
-				    archive_le64dec(p + offset);
+				uint64_t t = 0;
+				if (datasize < 8
+				    || (t = archive_le64dec(p + offset)) > INT64_MAX) {
+					archive_set_error(&a->archive, ARCHIVE_ERRNO_FILE_FORMAT,
+					    "Malformed 64-bit compressed size");
+					return ARCHIVE_FAILED;
+				}
+				zip_entry->compressed_size = t;
 				offset += 8;
 				datasize -= 8;
 			}
 			if (zip_entry->local_header_offset == 0xffffffff) {
-				if (datasize < 8)
-					break;
-				zip_entry->local_header_offset =
-				    archive_le64dec(p + offset);
+				uint64_t t = 0;
+				if (datasize < 8
+				    || (t = archive_le64dec(p + offset)) > INT64_MAX) {
+					archive_set_error(&a->archive, ARCHIVE_ERRNO_FILE_FORMAT,
+					    "Malformed 64-bit local header offset");
+					return ARCHIVE_FAILED;
+				}
+				zip_entry->local_header_offset = t;
 				offset += 8;
 				datasize -= 8;
 			}
@@ -905,6 +917,7 @@ zip_read_local_file_header(struct archive_read *a, struct archive_entry *entry,
 				archive_wstrcat(&s, wp);
 				archive_wstrappend_wchar(&s, L'/');
 				archive_entry_copy_pathname_w(entry, s.s);
+				archive_wstring_free(&s);
 			}
 		} else {
 			cp = archive_entry_pathname(entry);
@@ -915,6 +928,7 @@ zip_read_local_file_header(struct archive_read *a, struct archive_entry *entry,
 				archive_strcat(&s, cp);
 				archive_strappend_char(&s, '/');
 				archive_entry_set_pathname(entry, s.s);
+				archive_string_free(&s);
 			}
 		}
 	}
@@ -1154,11 +1168,18 @@ zip_read_data_none(struct archive_read *a, const void **_buff,
 			|| (zip->hctx_valid
 			 && zip->entry->aes_extra.vendor == AES_VENDOR_AE_2))) {
 			if (zip->entry->flags & LA_USED_ZIP64) {
+				uint64_t compressed, uncompressed;
 				zip->entry->crc32 = archive_le32dec(p + 4);
-				zip->entry->compressed_size =
-					archive_le64dec(p + 8);
-				zip->entry->uncompressed_size =
-					archive_le64dec(p + 16);
+				compressed = archive_le64dec(p + 8);
+				uncompressed = archive_le64dec(p + 16);
+				if (compressed > INT64_MAX || uncompressed > INT64_MAX) {
+					archive_set_error(&a->archive,
+					    ARCHIVE_ERRNO_FILE_FORMAT,
+					    "Overflow of 64-bit file sizes");
+					return ARCHIVE_FAILED;
+				}
+				zip->entry->compressed_size = compressed;
+				zip->entry->uncompressed_size = uncompressed;
 				zip->unconsumed = 24;
 			} else {
 				zip->entry->crc32 = archive_le32dec(p + 4);
@@ -1435,9 +1456,18 @@ zip_read_data_deflate(struct archive_read *a, const void **buff,
 			zip->unconsumed = 4;
 		}
 		if (zip->entry->flags & LA_USED_ZIP64) {
+			uint64_t compressed, uncompressed;
 			zip->entry->crc32 = archive_le32dec(p);
-			zip->entry->compressed_size = archive_le64dec(p + 4);
-			zip->entry->uncompressed_size = archive_le64dec(p + 12);
+			compressed = archive_le64dec(p + 4);
+			uncompressed = archive_le64dec(p + 12);
+			if (compressed > INT64_MAX || uncompressed > INT64_MAX) {
+				archive_set_error(&a->archive,
+				    ARCHIVE_ERRNO_FILE_FORMAT,
+				    "Overflow of 64-bit file sizes");
+				return ARCHIVE_FAILED;
+			}
+			zip->entry->compressed_size = compressed;
+			zip->entry->uncompressed_size = uncompressed;
 			zip->unconsumed += 20;
 		} else {
 			zip->entry->crc32 = archive_le32dec(p);
@@ -2377,7 +2407,7 @@ read_eocd(struct zip *zip, const char *p, int64_t current_offset)
  * Examine Zip64 EOCD locator:  If it's valid, store the information
  * from it.
  */
-static void
+static int
 read_zip64_eocd(struct archive_read *a, struct zip *zip, const char *p)
 {
 	int64_t eocd64_offset;
@@ -2387,35 +2417,37 @@ read_zip64_eocd(struct archive_read *a, struct zip *zip, const char *p)
 
 	/* Central dir must be on first volume. */
 	if (archive_le32dec(p + 4) != 0)
-		return;
+		return 0;
 	/* Must be only a single volume. */
 	if (archive_le32dec(p + 16) != 1)
-		return;
+		return 0;
 
 	/* Find the Zip64 EOCD record. */
 	eocd64_offset = archive_le64dec(p + 8);
 	if (__archive_read_seek(a, eocd64_offset, SEEK_SET) < 0)
-		return;
+		return 0;
 	if ((p = __archive_read_ahead(a, 56, NULL)) == NULL)
-		return;
+		return 0;
 	/* Make sure we can read all of it. */
 	eocd64_size = archive_le64dec(p + 4) + 12;
 	if (eocd64_size < 56 || eocd64_size > 16384)
-		return;
+		return 0;
 	if ((p = __archive_read_ahead(a, (size_t)eocd64_size, NULL)) == NULL)
-		return;
+		return 0;
 
 	/* Sanity-check the EOCD64 */
 	if (archive_le32dec(p + 16) != 0) /* Must be disk #0 */
-		return;
+		return 0;
 	if (archive_le32dec(p + 20) != 0) /* CD must be on disk #0 */
-		return;
+		return 0;
 	/* CD can't be split. */
 	if (archive_le64dec(p + 24) != archive_le64dec(p + 32))
-		return;
+		return 0;
 
 	/* Save the central directory offset for later use. */
 	zip->central_directory_offset = archive_le64dec(p + 48);
+
+	return 32;
 }
 
 static int
@@ -2453,15 +2485,14 @@ archive_read_format_zip_seekable_bid(struct archive_read *a, int best_bid)
 			if (memcmp(p + i, "PK\005\006", 4) == 0) {
 				int ret = read_eocd(zip, p + i,
 				    current_offset + i);
-				if (ret > 0) {
-					/* Zip64 EOCD locator precedes
-					 * regular EOCD if present. */
-					if (i >= 20
-					    && memcmp(p + i - 20, "PK\006\007", 4) == 0) {
-						read_zip64_eocd(a, zip, p + i - 20);
-					}
-					return (ret);
+				/* Zip64 EOCD locator precedes
+				 * regular EOCD if present. */
+				if (i >= 20 && memcmp(p + i - 20, "PK\006\007", 4) == 0) {
+					int ret_zip64 = read_zip64_eocd(a, zip, p + i - 20);
+					if (ret_zip64 > ret)
+						ret = ret_zip64;
 				}
+				return (ret);
 			}
 			i -= 4;
 			break;

@@ -35,6 +35,8 @@ SRCS+=	\
 	__error.c \
 	interposing_table.c
 
+SRCS+= getdents.c lstat.c mknod.c stat.c
+
 SRCS+= futimens.c utimensat.c
 NOASM+= futimens.o utimensat.o
 PSEUDO+= _futimens.o _utimensat.o
@@ -45,6 +47,7 @@ INTERPOSED = \
 	accept \
 	accept4 \
 	aio_suspend \
+	clock_nanosleep \
 	close \
 	connect \
 	fcntl \
@@ -360,6 +363,7 @@ MLINKS+=chown.2 fchown.2 \
 	chown.2 lchown.2
 MLINKS+=clock_gettime.2 clock_getres.2 \
 	clock_gettime.2 clock_settime.2
+MLINKS+=nanosleep.2 clock_nanosleep.2
 MLINKS+=cpuset.2 cpuset_getid.2 \
 	cpuset.2 cpuset_setid.2
 MLINKS+=cpuset_getaffinity.2 cpuset_setaffinity.2

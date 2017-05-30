@@ -1120,8 +1120,10 @@ ctl_backend_ramdisk_create(struct ctl_be_ramdisk_softc *softc,
 
 	STAILQ_INIT(&be_lun->cont_queue);
 	sx_init(&be_lun->page_lock, "cram page lock");
-	if (be_lun->cap_bytes == 0)
+	if (be_lun->cap_bytes == 0) {
+		be_lun->indir = 0;
 		be_lun->pages = malloc(be_lun->pblocksize, M_RAMDISK, M_WAITOK);
+	}
 	be_lun->zero_page = malloc(be_lun->pblocksize, M_RAMDISK,
 	    M_WAITOK|M_ZERO);
 	mtx_init(&be_lun->queue_lock, "cram queue lock", NULL, MTX_DEF);
@@ -1285,13 +1287,8 @@ bailout_error:
 static void
 ctl_backend_ramdisk_lun_shutdown(void *be_lun)
 {
-	struct ctl_be_ramdisk_lun *lun;
-	struct ctl_be_ramdisk_softc *softc;
-	int do_free;
-
-	lun = (struct ctl_be_ramdisk_lun *)be_lun;
-	softc = lun->softc;
-	do_free = 0;
+	struct ctl_be_ramdisk_lun *lun = be_lun;
+	struct ctl_be_ramdisk_softc *softc = lun->softc;
 
 	mtx_lock(&softc->lock);
 	lun->flags |= CTL_BE_RAMDISK_LUN_UNCONFIGURED;
@@ -1301,12 +1298,9 @@ ctl_backend_ramdisk_lun_shutdown(void *be_lun)
 		STAILQ_REMOVE(&softc->lun_list, lun, ctl_be_ramdisk_lun,
 			      links);
 		softc->num_luns--;
-		do_free = 1;
+		free(be_lun, M_RAMDISK);
 	}
 	mtx_unlock(&softc->lock);
-
-	if (do_free != 0)
-		free(be_lun, M_RAMDISK);
 }
 
 static void

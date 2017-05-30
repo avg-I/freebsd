@@ -353,10 +353,7 @@ kern_execve(struct thread *td, struct image_args *args, struct mac *mac_p)
  * userspace pointers from the passed thread.
  */
 static int
-do_execve(td, args, mac_p)
-	struct thread *td;
-	struct image_args *args;
-	struct mac *mac_p;
+do_execve(struct thread *td, struct image_args *args, struct mac *mac_p)
 {
 	struct proc *p = td->td_proc;
 	struct nameidata nd;
@@ -1042,8 +1039,7 @@ exec_map_first_page(imgp)
 }
 
 void
-exec_unmap_first_page(imgp)
-	struct image_params *imgp;
+exec_unmap_first_page(struct image_params *imgp)
 {
 	vm_page_t m;
 
@@ -1063,9 +1059,7 @@ exec_unmap_first_page(imgp)
  *	automatically in trap.c.
  */
 int
-exec_new_vmspace(imgp, sv)
-	struct image_params *imgp;
-	struct sysentvec *sv;
+exec_new_vmspace(struct image_params *imgp, struct sysentvec *sv)
 {
 	int error;
 	struct proc *p = imgp->proc;
@@ -1320,6 +1314,7 @@ err_exit:
 
 struct exec_args_kva {
 	vm_offset_t addr;
+	u_int gen;
 	SLIST_ENTRY(exec_args_kva) next;
 };
 
@@ -1327,6 +1322,7 @@ static DPCPU_DEFINE(struct exec_args_kva *, exec_args_kva);
 
 static SLIST_HEAD(, exec_args_kva) exec_args_kva_freelist;
 static struct mtx exec_args_kva_mtx;
+static u_int exec_args_gen;
 
 static void
 exec_prealloc_args_kva(void *arg __unused)
@@ -1339,6 +1335,7 @@ exec_prealloc_args_kva(void *arg __unused)
 	for (i = 0; i < exec_map_entries; i++) {
 		argkva = malloc(sizeof(*argkva), M_PARGS, M_WAITOK);
 		argkva->addr = kmap_alloc_wait(exec_map, exec_map_entry_size);
+		argkva->gen = exec_args_gen;
 		SLIST_INSERT_HEAD(&exec_args_kva_freelist, argkva, next);
 	}
 }
@@ -1364,15 +1361,16 @@ exec_alloc_args_kva(void **cookie)
 }
 
 static void
-exec_free_args_kva(void *cookie)
+exec_release_args_kva(struct exec_args_kva *argkva, u_int gen)
 {
-	struct exec_args_kva *argkva;
 	vm_offset_t base;
 
-	argkva = cookie;
 	base = argkva->addr;
-
-	vm_map_madvise(exec_map, base, base + exec_map_entry_size, MADV_FREE);
+	if (argkva->gen != gen) {
+		vm_map_madvise(exec_map, base, base + exec_map_entry_size,
+		    MADV_FREE);
+		argkva->gen = gen;
+	}
 	if (!atomic_cmpset_ptr((uintptr_t *)DPCPU_PTR(exec_args_kva),
 	    (uintptr_t)NULL, (uintptr_t)argkva)) {
 		mtx_lock(&exec_args_kva_mtx);
@@ -1381,6 +1379,46 @@ exec_free_args_kva(void *cookie)
 		mtx_unlock(&exec_args_kva_mtx);
 	}
 }
+
+static void
+exec_free_args_kva(void *cookie)
+{
+
+	exec_release_args_kva(cookie, exec_args_gen);
+}
+
+static void
+exec_args_kva_lowmem(void *arg __unused)
+{
+	SLIST_HEAD(, exec_args_kva) head;
+	struct exec_args_kva *argkva;
+	u_int gen;
+	int i;
+
+	gen = atomic_fetchadd_int(&exec_args_gen, 1) + 1;
+
+	/*
+	 * Force an madvise of each KVA range. Any currently allocated ranges
+	 * will have MADV_FREE applied once they are freed.
+	 */
+	SLIST_INIT(&head);
+	mtx_lock(&exec_args_kva_mtx);
+	SLIST_SWAP(&head, &exec_args_kva_freelist, exec_args_kva);
+	mtx_unlock(&exec_args_kva_mtx);
+	while ((argkva = SLIST_FIRST(&head)) != NULL) {
+		SLIST_REMOVE_HEAD(&head, next);
+		exec_release_args_kva(argkva, gen);
+	}
+
+	CPU_FOREACH(i) {
+		argkva = (void *)atomic_readandclear_ptr(
+		    (uintptr_t *)DPCPU_ID_PTR(i, exec_args_kva));
+		if (argkva != NULL)
+			exec_release_args_kva(argkva, gen);
+	}
+}
+EVENTHANDLER_DEFINE(vm_lowmem, exec_args_kva_lowmem, NULL,
+    EVENTHANDLER_PRI_ANY);
 
 /*
  * Allocate temporary demand-paged, zero-filled memory for the file name,
@@ -1416,8 +1454,7 @@ exec_free_args(struct image_args *args)
  * as the initial stack pointer.
  */
 register_t *
-exec_copyout_strings(imgp)
-	struct image_params *imgp;
+exec_copyout_strings(struct image_params *imgp)
 {
 	int argc, envc;
 	char **vectp;
@@ -1573,8 +1610,7 @@ exec_copyout_strings(imgp)
  *	Return 0 for success or error code on failure.
  */
 int
-exec_check_permissions(imgp)
-	struct image_params *imgp;
+exec_check_permissions(struct image_params *imgp)
 {
 	struct vnode *vp = imgp->vp;
 	struct vattr *attr = imgp->attr;
@@ -1644,8 +1680,7 @@ exec_check_permissions(imgp)
  * Exec handler registration
  */
 int
-exec_register(execsw_arg)
-	const struct execsw *execsw_arg;
+exec_register(const struct execsw *execsw_arg)
 {
 	const struct execsw **es, **xs, **newexecsw;
 	int count = 2;	/* New slot and trailing NULL */
@@ -1667,8 +1702,7 @@ exec_register(execsw_arg)
 }
 
 int
-exec_unregister(execsw_arg)
-	const struct execsw *execsw_arg;
+exec_unregister(const struct execsw *execsw_arg)
 {
 	const struct execsw **es, **xs, **newexecsw;
 	int count = 1;

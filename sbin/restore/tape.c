@@ -15,7 +15,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -301,7 +301,7 @@ setup(void)
 	 * whiteout inode exists, so that the whiteout entries can be
 	 * extracted.
 	 */
-	SETINO(WINO, dumpmap);
+	SETINO(UFS_WINO, dumpmap);
 	/* 'r' restores don't call getvol() for tape 1, so mark it as read. */
 	if (command == 'r')
 		tapesread = 1;

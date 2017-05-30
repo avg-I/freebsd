@@ -577,7 +577,7 @@ hostap_input(struct ieee80211_node *ni, struct mbuf *m,
 			if (IEEE80211_QOS_HAS_SEQ(wh) &&
 			    TID_TO_WME_AC(tid) >= WME_AC_VI)
 				ic->ic_wme.wme_hipri_traffic++;
-			if (! ieee80211_check_rxseq(ni, wh, bssid))
+			if (! ieee80211_check_rxseq(ni, wh, bssid, rxs))
 				goto out;
 		}
 	}
@@ -665,7 +665,7 @@ hostap_input(struct ieee80211_node *ni, struct mbuf *m,
 		 * and we should do nothing more with it.
 		 */
 		if ((m->m_flags & M_AMPDU) &&
-		    ieee80211_ampdu_reorder(ni, m) != 0) {
+		    ieee80211_ampdu_reorder(ni, m, rxs) != 0) {
 			m = NULL;
 			goto out;
 		}
@@ -2101,6 +2101,18 @@ hostap_recv_mgmt(struct ieee80211_node *ni, struct mbuf *m0,
 			     return);		/* XXX just NULL out? */
 		}
 
+		/* Validate VHT IEs */
+		if (vhtcap != NULL) {
+			IEEE80211_VERIFY_LENGTH(vhtcap[1],
+			    sizeof(struct ieee80211_ie_vhtcap) - 2,
+			    return);
+		}
+		if (vhtinfo != NULL) {
+			IEEE80211_VERIFY_LENGTH(vhtinfo[1],
+			    sizeof(struct ieee80211_ie_vht_operation) - 2,
+			    return);
+		}
+
 		if ((vap->iv_flags & IEEE80211_F_WPA) &&
 		    !wpa_assocreq(ni, &rsnparms, wh, wpa, rsn, capinfo))
 			return;
@@ -2151,7 +2163,9 @@ hostap_recv_mgmt(struct ieee80211_node *ni, struct mbuf *m0,
 		ni->ni_chan = vap->iv_bss->ni_chan;
 
 		/* VHT */
-		if (IEEE80211_IS_CHAN_VHT(ni->ni_chan)) {
+		if (IEEE80211_IS_CHAN_VHT(ni->ni_chan) &&
+		    vhtcap != NULL &&
+		    vhtinfo != NULL) {
 			/* XXX TODO; see below */
 			printf("%s: VHT TODO!\n", __func__);
 			ieee80211_vht_node_init(ni);

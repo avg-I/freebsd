@@ -53,7 +53,6 @@ __FBSDID("$FreeBSD$");
 #include "opt_mp_watchdog.h"
 #include "opt_platform.h"
 #ifdef __i386__
-#include "opt_npx.h"
 #include "opt_apic.h"
 #include "opt_xbox.h"
 #endif
@@ -130,6 +129,14 @@ acpi_cpu_c1(void)
 	__asm __volatile("sti; hlt");
 }
 
+/*
+ * Use mwait to pause execution while waiting for an interrupt or
+ * another thread to signal that there is more work.
+ *
+ * NOTE: Interrupts will cause a wakeup; however, this function does
+ * not enable interrupt handling. The caller is responsible to enable
+ * interrupts.
+ */
 void
 acpi_cpu_idle_mwait(uint32_t mwait_hint)
 {
@@ -444,9 +451,7 @@ struct {
 	{ cpu_idle_spin, "spin" },
 	{ cpu_idle_mwait, "mwait" },
 	{ cpu_idle_hlt, "hlt" },
-#if !defined(__i386__)
 	{ cpu_idle_acpi, "acpi" },
-#endif
 	{ NULL, NULL }
 };
 
@@ -463,11 +468,9 @@ idle_sysctl_available(SYSCTL_HANDLER_ARGS)
 		if (strstr(idle_tbl[i].id_name, "mwait") &&
 		    (cpu_feature2 & CPUID2_MON) == 0)
 			continue;
-#if !defined(__i386__)
 		if (strcmp(idle_tbl[i].id_name, "acpi") == 0 &&
 		    cpu_idle_hook == NULL)
 			continue;
-#endif
 		p += sprintf(p, "%s%s", p != avail ? ", " : "",
 		    idle_tbl[i].id_name);
 	}
@@ -502,11 +505,9 @@ idle_sysctl(SYSCTL_HANDLER_ARGS)
 		if (strstr(idle_tbl[i].id_name, "mwait") &&
 		    (cpu_feature2 & CPUID2_MON) == 0)
 			continue;
-#if !defined(__i386__)
 		if (strcmp(idle_tbl[i].id_name, "acpi") == 0 &&
 		    cpu_idle_hook == NULL)
 			continue;
-#endif
 		if (strcmp(idle_tbl[i].id_name, buf))
 			continue;
 		cpu_idle_fn = idle_tbl[i].id_fn;

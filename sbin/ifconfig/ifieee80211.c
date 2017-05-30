@@ -1143,6 +1143,7 @@ set80211chanlist(const char *val, int d, int s, const struct afswtch *rafp)
 		cp = tp;
 	}
 	set80211(s, IEEE80211_IOC_CHANLIST, 0, sizeof(chanlist), &chanlist);
+	free(temp);
 }
 
 static void
@@ -1757,6 +1758,7 @@ set80211shortgi(const char *val, int d, int s, const struct afswtch *rafp)
 		0, NULL);
 }
 
+/* XXX 11ac density/size is different */
 static void
 set80211ampdu(const char *val, int d, int s, const struct afswtch *rafp)
 {
@@ -1830,6 +1832,7 @@ DECL_CMD_FUNC(set80211ampdulimit, val, d)
 	set80211(s, IEEE80211_IOC_AMPDU_LIMIT, v, 0, NULL);
 }
 
+/* XXX 11ac density/size is different */
 static
 DECL_CMD_FUNC(set80211ampdudensity, val, d)
 {
@@ -3159,6 +3162,14 @@ printwpsie(const char *tag, const u_int8_t *ie, size_t ielen, int maxlen)
 			uint16_t tlv_type = BE_READ_2(ie);
 			uint16_t tlv_len  = BE_READ_2(ie + 2);
 
+			/* some devices broadcast invalid WPS frames */
+			if (tlv_len > len) {
+				printf("bad frame length tlv_type=0x%02x "
+				    "tlv_len=%d len=%d", tlv_type, tlv_len,
+				    len);
+				break;
+			}
+
 			ie += 4, len -= 4;
 
 			switch (tlv_type) {
@@ -3449,13 +3460,30 @@ printies(const u_int8_t *vp, int ielen, int maxcols)
 static void
 printmimo(const struct ieee80211_mimo_info *mi)
 {
-	/* NB: don't muddy display unless there's something to show */
-	if (mi->rssi[0] != 0 || mi->rssi[1] != 0 || mi->rssi[2] != 0) {
-		/* XXX ignore EVM for now */
-		printf(" (rssi %.1f:%.1f:%.1f nf %d:%d:%d)",
-		    mi->rssi[0] / 2.0, mi->rssi[1] / 2.0, mi->rssi[2] / 2.0,
-		    mi->noise[0], mi->noise[1], mi->noise[2]);
+	int i;
+	int r = 0;
+
+	for (i = 0; i < IEEE80211_MAX_CHAINS; i++) {
+		if (mi->ch[i].rssi != 0) {
+			r = 1;
+			break;
+		}
 	}
+
+	/* NB: don't muddy display unless there's something to show */
+	if (r == 0)
+		return;
+
+	/* XXX TODO: ignore EVM; secondary channels for now */
+	printf(" (rssi %.1f:%.1f:%.1f:%.1f nf %d:%d:%d:%d)",
+	    mi->ch[0].rssi[0] / 2.0,
+	    mi->ch[1].rssi[0] / 2.0,
+	    mi->ch[2].rssi[0] / 2.0,
+	    mi->ch[3].rssi[0] / 2.0,
+	    mi->ch[0].noise[0],
+	    mi->ch[1].noise[0],
+	    mi->ch[2].noise[0],
+	    mi->ch[3].noise[0]);
 }
 
 static void
@@ -4931,6 +4959,7 @@ end:
 				break;
 			}
 		}
+		/* XXX 11ac density/size is different */
 		if (get80211val(s, IEEE80211_IOC_AMPDU_LIMIT, &val) != -1) {
 			switch (val) {
 			case IEEE80211_HTCAP_MAXRXAMPDU_8K:
@@ -4947,6 +4976,7 @@ end:
 				break;
 			}
 		}
+		/* XXX 11ac density/size is different */
 		if (get80211val(s, IEEE80211_IOC_AMPDU_DENSITY, &val) != -1) {
 			switch (val) {
 			case IEEE80211_HTCAP_MPDUDENSITY_NA:
@@ -5028,6 +5058,8 @@ end:
 			else if (verbose)
 				LINE_CHECK("-rifs");
 		}
+
+		/* XXX VHT STBC? */
 		if (get80211val(s, IEEE80211_IOC_STBC, &val) != -1) {
 			switch (val) {
 			case 0:
@@ -5594,12 +5626,12 @@ static struct cmd ieee80211_cmds[] = {
 	DEF_CMD_ARG("bgscanidle",	set80211bgscanidle),
 	DEF_CMD_ARG("bgscanintvl",	set80211bgscanintvl),
 	DEF_CMD_ARG("scanvalid",	set80211scanvalid),
-	DEF_CMD("quiet",        1,      set80211quiet),
-	DEF_CMD("-quiet",       0,      set80211quiet),
-	DEF_CMD_ARG("quiet_count",      set80211quietcount),
-	DEF_CMD_ARG("quiet_period",     set80211quietperiod),
-	DEF_CMD_ARG("quiet_dur",        set80211quietduration),
-	DEF_CMD_ARG("quiet_offset",     set80211quietoffset),
+	DEF_CMD("quiet",	1,	set80211quiet),
+	DEF_CMD("-quiet",	0,	set80211quiet),
+	DEF_CMD_ARG("quiet_count",	set80211quietcount),
+	DEF_CMD_ARG("quiet_period",	set80211quietperiod),
+	DEF_CMD_ARG("quiet_duration",	set80211quietduration),
+	DEF_CMD_ARG("quiet_offset",	set80211quietoffset),
 	DEF_CMD_ARG("roam:rssi",	set80211roamrssi),
 	DEF_CMD_ARG("roam:rate",	set80211roamrate),
 	DEF_CMD_ARG("mcastrate",	set80211mcastrate),

@@ -10,7 +10,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -744,6 +744,11 @@ if_attach_internal(struct ifnet *ifp, int vmove, struct if_clone *ifc)
 		/* Reliably crash if used uninitialized. */
 		ifp->if_broadcastaddr = NULL;
 
+		if (ifp->if_type == IFT_ETHER) {
+			ifp->if_hw_addr = malloc(ifp->if_addrlen, M_IFADDR,
+			    M_WAITOK | M_ZERO);
+		}
+
 #if defined(INET) || defined(INET6)
 		/* Use defaults for TSO, if nothing is set */
 		if (ifp->if_hw_tsomax == 0 &&
@@ -1059,6 +1064,8 @@ if_detach_internal(struct ifnet *ifp, int vmove, struct if_clone **ifcp)
 		 * Remove link ifaddr pointer and maybe decrement if_index.
 		 * Clean up all addresses.
 		 */
+		free(ifp->if_hw_addr, M_IFADDR);
+		ifp->if_hw_addr = NULL;
 		ifp->if_addr = NULL;
 
 		/* We can now free link ifaddr. */
@@ -2667,6 +2674,10 @@ ifhwioctl(u_long cmd, struct ifnet *ifp, caddr_t data, struct thread *td)
 		    ifr->ifr_addr.sa_data, ifr->ifr_addr.sa_len);
 		break;
 
+	case SIOCGHWADDR:
+		error = if_gethwaddr(ifp, ifr);
+		break;
+
 	case SIOCAIFGROUP:
 	{
 		struct ifgroupreq *ifgr = (struct ifgroupreq *)ifr;
@@ -2702,9 +2713,6 @@ ifhwioctl(u_long cmd, struct ifnet *ifp, caddr_t data, struct thread *td)
 	}
 	return (error);
 }
-
-/* COMPAT_SVR4 */
-#define	OSIOCGIFCONF	_IOWR('i', 20, struct ifconf)
 
 #ifdef COMPAT_FREEBSD32
 struct ifconf32 {
@@ -2745,7 +2753,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct thread *td)
 
 	switch (cmd) {
 	case SIOCGIFCONF:
-	case OSIOCGIFCONF:	/* COMPAT_SVR4 */
 		error = ifconf(cmd, data);
 		CURVNET_RESTORE();
 		return (error);
@@ -3017,15 +3024,6 @@ again:
 			if (prison_if(curthread->td_ucred, sa) != 0)
 				continue;
 			addrs++;
-			/* COMPAT_SVR4 */
-			if (cmd == OSIOCGIFCONF) {
-				struct osockaddr *osa =
-				    (struct osockaddr *)&ifr.ifr_addr;
-				ifr.ifr_addr = *sa;
-				osa->sa_family = sa->sa_family;
-				sbuf_bcat(sb, &ifr, sizeof(ifr));
-				max_len += sizeof(ifr);
-			} else
 			if (sa->sa_len <= sizeof(*sa)) {
 				ifr.ifr_addr = *sa;
 				sbuf_bcat(sb, &ifr, sizeof(ifr));
@@ -3597,6 +3595,29 @@ if_requestencap_default(struct ifnet *ifp, struct if_encap_req *req)
 }
 
 /*
+ * Get the link layer address that was read from the hardware at attach.
+ *
+ * This is only set by Ethernet NICs (IFT_ETHER), but laggX interfaces re-type
+ * their component interfaces as IFT_IEEE8023ADLAG.
+ */
+int
+if_gethwaddr(struct ifnet *ifp, struct ifreq *ifr)
+{
+
+	if (ifp->if_hw_addr == NULL)
+		return (ENODEV);
+
+	switch (ifp->if_type) {
+	case IFT_ETHER:
+	case IFT_IEEE8023ADLAG:
+		bcopy(ifp->if_hw_addr, ifr->ifr_addr.sa_data, ifp->if_addrlen);
+		return (0);
+	default:
+		return (ENODEV);
+	}
+}
+
+/*
  * The name argument must be a pointer to storage which will last as
  * long as the interface does.  For physical devices, the result of
  * device_get_name(dev) is a good choice and for pseudo-devices a
@@ -4101,6 +4122,51 @@ if_vlancap(if_t ifh)
 {
 	struct ifnet *ifp = (struct ifnet *)ifh;
 	VLAN_CAPABILITIES(ifp);
+}
+
+int
+if_sethwtsomax(if_t ifp, u_int if_hw_tsomax)
+{
+
+	((struct ifnet *)ifp)->if_hw_tsomax = if_hw_tsomax;
+        return (0);
+}
+
+int
+if_sethwtsomaxsegcount(if_t ifp, u_int if_hw_tsomaxsegcount)
+{
+
+	((struct ifnet *)ifp)->if_hw_tsomaxsegcount = if_hw_tsomaxsegcount;
+        return (0);
+}
+
+int
+if_sethwtsomaxsegsize(if_t ifp, u_int if_hw_tsomaxsegsize)
+{
+
+	((struct ifnet *)ifp)->if_hw_tsomaxsegsize = if_hw_tsomaxsegsize;
+        return (0);
+}
+
+u_int
+if_gethwtsomax(if_t ifp)
+{
+
+	return (((struct ifnet *)ifp)->if_hw_tsomax);
+}
+
+u_int
+if_gethwtsomaxsegcount(if_t ifp)
+{
+
+	return (((struct ifnet *)ifp)->if_hw_tsomaxsegcount);
+}
+
+u_int
+if_gethwtsomaxsegsize(if_t ifp)
+{
+
+	return (((struct ifnet *)ifp)->if_hw_tsomaxsegsize);
 }
 
 void

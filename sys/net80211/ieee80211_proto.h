@@ -292,6 +292,10 @@ struct ieee80211_wme_state {
 void	ieee80211_wme_initparams(struct ieee80211vap *);
 void	ieee80211_wme_updateparams(struct ieee80211vap *);
 void	ieee80211_wme_updateparams_locked(struct ieee80211vap *);
+void	ieee80211_wme_vap_getparams(struct ieee80211vap *vap,
+	    struct chanAccParams *);
+void	ieee80211_wme_ic_getparams(struct ieee80211com *ic,
+	    struct chanAccParams *);
 
 /*
  * Return the WME TID from a QoS frame.  If no TID
@@ -391,6 +395,8 @@ enum {
 	IEEE80211_BEACON_TDMA	= 9,	/* TDMA Info */
 	IEEE80211_BEACON_ATH	= 10,	/* ATH parameters */
 	IEEE80211_BEACON_MESHCONF = 11,	/* Mesh Configuration */
+	IEEE80211_BEACON_QUIET	= 12,	/* Quiet time IE */
+	IEEE80211_BEACON_VHTINFO	= 13,	/* VHT information */
 };
 int	ieee80211_beacon_update(struct ieee80211_node *,
 		struct mbuf *, int mcast);

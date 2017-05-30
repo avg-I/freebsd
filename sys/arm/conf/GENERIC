@@ -20,8 +20,8 @@
 
 ident		GENERIC
 
-cpu		CPU_CORTEXA_MP
-cpu		CPU_CORTEXA8
+cpu		CPU_CORTEXA
+options 	SMP_ON_UP
 machine 	arm armv6
 makeoptions	CONF_CFLAGS="-march=armv7a"
 
@@ -183,9 +183,8 @@ device		umass			# Disks/Mass storage - Requires scbus and da
 device		uhid			# "Human Interface Devices"
 device		ukbd			# Allow keyboard like HIDs to control console
 
-# Device mode support and USFS template
+# Device mode support
 device		usb_template    	# Control of the gadget
-device		usfs
 
 # Ethernet
 device		loop

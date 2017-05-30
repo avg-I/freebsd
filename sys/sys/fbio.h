@@ -14,7 +14,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -338,6 +338,7 @@ struct video_info {
 #define V_INFO_LINEAR	(1 << 2)
 #define V_INFO_VESA	(1 << 3)
 #define	V_INFO_NONVGA	(1 << 4)
+#define	V_INFO_CWIDTH9	(1 << 5)
     int			vi_width;
     int			vi_height;
     int			vi_cwidth;
@@ -400,6 +401,7 @@ struct video_adapter {
 #define V_ADP_REGISTERED (1 << 18)
 #define V_ADP_ATTACHED	(1 << 19)
 #define	V_ADP_DAC8	(1 << 20)
+#define	V_ADP_CWIDTH9	(1 << 21)
     vm_offset_t		va_io_base;
     int			va_io_size;
     vm_offset_t		va_crtc_addr;

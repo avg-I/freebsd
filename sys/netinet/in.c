@@ -11,7 +11,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -96,8 +96,8 @@ int
 in_localaddr(struct in_addr in)
 {
 	struct rm_priotracker in_ifa_tracker;
-	register u_long i = ntohl(in.s_addr);
-	register struct in_ifaddr *ia;
+	u_long i = ntohl(in.s_addr);
+	struct in_ifaddr *ia;
 
 	IN_IFADDR_RLOCK(&in_ifa_tracker);
 	TAILQ_FOREACH(ia, &V_in_ifaddrhead, ia_link) {
@@ -187,8 +187,8 @@ in_localip_more(struct in_ifaddr *ia)
 int
 in_canforward(struct in_addr in)
 {
-	register u_long i = ntohl(in.s_addr);
-	register u_long net;
+	u_long i = ntohl(in.s_addr);
+	u_long net;
 
 	if (IN_EXPERIMENTAL(i) || IN_MULTICAST(i) || IN_LINKLOCAL(i))
 		return (0);
@@ -206,8 +206,8 @@ in_canforward(struct in_addr in)
 static void
 in_socktrim(struct sockaddr_in *ap)
 {
-    register char *cplim = (char *) &ap->sin_addr;
-    register char *cp = (char *) (&ap->sin_addr + 1);
+    char *cplim = (char *) &ap->sin_addr;
+    char *cp = (char *) (&ap->sin_addr + 1);
 
     ap->sin_len = 0;
     while (--cp >= cplim)
@@ -962,7 +962,7 @@ in_ifaddr_broadcast(struct in_addr in, struct in_ifaddr *ia)
 int
 in_broadcast(struct in_addr in, struct ifnet *ifp)
 {
-	register struct ifaddr *ifa;
+	struct ifaddr *ifa;
 	int found;
 
 	if (in.s_addr == INADDR_BROADCAST ||
@@ -1218,7 +1218,7 @@ in_lltable_rtcheck(struct ifnet *ifp, u_int flags, const struct sockaddr *l3addr
 	 */
 	if (!(rt_flags & RTF_HOST) && info.rti_ifp != ifp) {
 		const char *sa, *mask, *addr, *lim;
-		int len;
+		const struct sockaddr_in *l3sin;
 
 		mask = (const char *)&rt_mask;
 		/*
@@ -1230,14 +1230,17 @@ in_lltable_rtcheck(struct ifnet *ifp, u_int flags, const struct sockaddr *l3addr
 
 		sa = (const char *)&rt_key;
 		addr = (const char *)l3addr;
-		len = ((const struct sockaddr_in *)l3addr)->sin_len;
-		lim = addr + len;
+		l3sin = (const struct sockaddr_in *)l3addr;
+		lim = addr + l3sin->sin_len;
 
 		for ( ; addr < lim; sa++, mask++, addr++) {
 			if ((*sa ^ *addr) & *mask) {
 #ifdef DIAGNOSTIC
-				log(LOG_INFO, "IPv4 address: \"%s\" is not on the network\n",
-				    inet_ntoa(((const struct sockaddr_in *)l3addr)->sin_addr));
+				char addrbuf[INET_ADDRSTRLEN];
+
+				log(LOG_INFO, "IPv4 address: \"%s\" "
+				    "is not on the network\n",
+				    inet_ntoa_r(l3sin->sin_addr, addrbuf));
 #endif
 				return (EINVAL);
 			}

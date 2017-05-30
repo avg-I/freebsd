@@ -43,7 +43,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -68,6 +68,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/kerneldump.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <fstab.h>
@@ -278,7 +279,7 @@ static int
 check_space(const char *savedir, off_t dumpsize, int bounds)
 {
 	FILE *fp;
-	off_t minfree, spacefree, totfree, needed;
+	off_t available, minfree, spacefree, totfree, needed;
 	struct statfs fsbuf;
 	char buf[100];
 
@@ -294,18 +295,37 @@ check_space(const char *savedir, off_t dumpsize, int bounds)
 	else {
 		if (fgets(buf, sizeof(buf), fp) == NULL)
 			minfree = 0;
-		else
-			minfree = atoi(buf);
+		else {
+			char *endp;
+
+			errno = 0;
+			minfree = strtoll(buf, &endp, 10);
+			if (minfree == 0 && errno != 0)
+				minfree = -1;
+			else {
+				while (*endp != '\0' && isspace(*endp))
+					endp++;
+				if (*endp != '\0' || minfree < 0)
+					minfree = -1;
+			}
+			if (minfree < 0)
+				syslog(LOG_WARNING,
+				    "`minfree` didn't contain a valid size "
+				    "(`%s`). Defaulting to 0", buf);
+		}
 		(void)fclose(fp);
 	}
 
+	available = minfree > 0 ? spacefree - minfree : totfree;
 	needed = dumpsize / 1024 + 2;	/* 2 for info file */
 	needed -= saved_dump_size(bounds);
-	if ((minfree > 0 ? spacefree : totfree) - needed < minfree) {
+	if (available < needed) {
 		syslog(LOG_WARNING,
-	"no dump, not enough free space on device (%lld available, need %lld)",
-		    (long long)(minfree > 0 ? spacefree : totfree),
-		    (long long)needed);
+		    "no dump: not enough free space on device (need at least "
+		    "%jdkB for dump; %jdkB available; %jdkB reserved)",
+		    (intmax_t)needed,
+		    (intmax_t)available + minfree,
+		    (intmax_t)minfree);
 		return (0);
 	}
 	if (spacefree - needed < 0)
@@ -478,6 +498,7 @@ DoFile(const char *savedir, const char *device)
 	bool isencrypted, ret;
 
 	bounds = getbounds();
+	dumpkey = NULL;
 	mediasize = 0;
 	status = STATUS_UNKNOWN;
 
@@ -517,8 +538,8 @@ DoFile(const char *savedir, const char *device)
 	}
 
 	if (verbose) {
-		printf("mediasize = %lld\n", (long long)mediasize);
-		printf("sectorsize = %u\n", sectorsize);
+		printf("mediasize = %lld bytes\n", (long long)mediasize);
+		printf("sectorsize = %u bytes\n", sectorsize);
 	}
 
 	if (sectorsize < sizeof(kdhl)) {
@@ -650,7 +671,7 @@ DoFile(const char *savedir, const char *device)
 	}
 
 	if (kdhl.panicstring[0] != '\0')
-		syslog(LOG_ALERT, "reboot after panic: %*s",
+		syslog(LOG_ALERT, "reboot after panic: %.*s",
 		    (int)sizeof(kdhl.panicstring), kdhl.panicstring);
 	else
 		syslog(LOG_ALERT, "reboot");
@@ -816,6 +837,7 @@ nuke:
 	}
 	xo_close_container_h(xostdout, "crashdump");
 	xo_finish_h(xostdout);
+	free(dumpkey);
 	free(temp);
 	close(fd);
 	return;
@@ -824,6 +846,7 @@ closeall:
 	fclose(fp);
 
 closefd:
+	free(dumpkey);
 	free(temp);
 	close(fd);
 }

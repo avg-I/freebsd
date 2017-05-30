@@ -132,6 +132,25 @@ nospace:
 }
 
 /*
+ * Allocate EA's block for inode.
+ */
+daddr_t
+ext2_allocfacl(struct inode *ip)
+{
+	struct m_ext2fs *fs;
+	daddr_t facl;
+
+	fs = ip->i_e2fs;
+
+	EXT2_LOCK(ip->i_ump);
+	facl = ext2_alloccg(ip, ino_to_cg(fs, ip->i_number), 0, fs->e2fs_bsize);
+	if (0 == facl)
+		EXT2_UNLOCK(ip->i_ump);
+
+	return (facl);
+}
+
+/*
  * Reallocate a sequence of blocks into a contiguous sequence of blocks.
  *
  * The vnode and an array of buffer pointers for a range of sequential
@@ -167,7 +186,7 @@ ext2_reallocblks(struct vop_reallocblks_args *ap)
 	uint32_t *bap, *sbap, *ebap;
 	struct ext2mount *ump;
 	struct cluster_save *buflist;
-	struct indir start_ap[NIADDR + 1], end_ap[NIADDR + 1], *idp;
+	struct indir start_ap[EXT2_NIADDR + 1], end_ap[EXT2_NIADDR + 1], *idp;
 	e2fs_lbn_t start_lbn, end_lbn;
 	int soff;
 	e2fs_daddr_t newblk, blkno;
@@ -203,7 +222,7 @@ ext2_reallocblks(struct vop_reallocblks_args *ap)
 	 * this for other indirect block boundaries, but it is only
 	 * important for the first one.
 	 */
-	if (start_lbn < NDADDR && end_lbn >= NDADDR)
+	if (start_lbn < EXT2_NDADDR && end_lbn >= EXT2_NDADDR)
 		return (ENOSPC);
 	/*
 	 * If the latest allocation is in a new cylinder group, assume that
@@ -403,9 +422,9 @@ ext2_valloc(struct vnode *pvp, int mode, struct ucred *cred, struct vnode **vpp)
 	ip->i_mode = 0;
 	ip->i_flags = 0;
 	/* now we want to make sure that the block pointers are zeroed out */
-	for (i = 0; i < NDADDR; i++)
+	for (i = 0; i < EXT2_NDADDR; i++)
 		ip->i_db[i] = 0;
-	for (i = 0; i < NIADDR; i++)
+	for (i = 0; i < EXT2_NIADDR; i++)
 		ip->i_ib[i] = 0;
 
 	/*

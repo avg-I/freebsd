@@ -368,7 +368,7 @@ static device_method_t mv_pcib_methods[] = {
 	DEVMETHOD(pcib_read_config,		mv_pcib_read_config),
 	DEVMETHOD(pcib_write_config,		mv_pcib_write_config),
 	DEVMETHOD(pcib_route_interrupt,		mv_pcib_route_interrupt),
-
+	DEVMETHOD(pcib_request_feature,		pcib_request_feature_allow),
 #if defined(SOC_MV_ARMADAXP)
 	DEVMETHOD(pcib_alloc_msi,		mv_pcib_alloc_msi),
 	DEVMETHOD(pcib_release_msi,		mv_pcib_release_msi),
@@ -918,7 +918,7 @@ static inline void
 pcib_write_irq_mask(struct mv_pcib_softc *sc, uint32_t mask)
 {
 
-	if (sc->sc_type != MV_TYPE_PCI)
+	if (sc->sc_type != MV_TYPE_PCIE)
 		return;
 
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, PCIE_REG_IRQ_MASK, mask);

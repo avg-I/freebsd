@@ -116,6 +116,7 @@ MAN=	accept_filter.9 \
 	disk.9 \
 	dnv.9 \
 	domain.9 \
+	dpcpu.9 \
 	drbr.9 \
 	driver.9 \
 	DRIVER_MODULE.9 \
@@ -299,7 +300,6 @@ MAN=	accept_filter.9 \
 	uidinfo.9 \
 	uio.9 \
 	unr.9 \
-	utopia.9 \
 	vaccess.9 \
 	vaccess_acl_nfs4.9 \
 	vaccess_acl_posix1e.9 \
@@ -797,6 +797,7 @@ MLINKS+=DRIVER_MODULE.9 DRIVER_MODULE_ORDERED.9 \
 	DRIVER_MODULE.9 EARLY_DRIVER_MODULE.9 \
 	DRIVER_MODULE.9 EARLY_DRIVER_MODULE_ORDERED.9
 MLINKS+=EVENTHANDLER.9 EVENTHANDLER_DECLARE.9 \
+	EVENTHANDLER.9 EVENTHANDLER_DEFINE.9 \
 	EVENTHANDLER.9 EVENTHANDLER_DEREGISTER.9 \
 	EVENTHANDLER.9 eventhandler_deregister.9 \
 	EVENTHANDLER.9 eventhandler_find_list.9 \
@@ -963,6 +964,61 @@ MLINKS+=ieee80211_scan.9 ieee80211_add_scan.9 \
 MLINKS+=ieee80211_vap.9 ieee80211_vap_attach.9 \
 	ieee80211_vap.9 ieee80211_vap_detach.9 \
 	ieee80211_vap.9 ieee80211_vap_setup.9
+MLINKS+=iflibdd.9 ifdi_attach_pre.9 \
+	iflibdd.9 ifdi_attach_post.9 \
+	iflibdd.9 ifdi_detach.9 \
+	iflibdd.9 ifdi_get_counter.9 \
+	iflibdd.9 ifdi_i2c_req.9 \
+	iflibdd.9 ifdi_init.9 \
+	iflibdd.9 ifdi_intr_enable.9 \
+	iflibdd.9 ifdi_intr_disable.9 \
+	iflibdd.9 ifdi_led_func.9 \
+	iflibdd.9 ifdi_link_intr_enable.9 \
+	iflibdd.9 ifdi_media_set.9 \
+	iflibdd.9 ifdi_media_status.9 \
+	iflibdd.9 ifdi_media_change.9 \
+	iflibdd.9 ifdi_mtu_set.9 \
+	iflibdd.9 ifdi_multi_set.9 \
+	iflibdd.9 ifdi_promisc_set.9 \
+	iflibdd.9 ifdi_queues_alloc.9 \
+	iflibdd.9 ifdi_queues_free.9 \
+	iflibdd.9 ifdi_queue_intr_enable.9 \
+	iflibdd.9 ifdi_resume.9 \
+	iflibdd.9 ifdi_rxq_setup.9 \
+	iflibdd.9 ifdi_stop.9 \
+	iflibdd.9 ifdi_suspend.9 \
+	iflibdd.9 ifdi_sysctl_int_delay.9 \
+	iflibdd.9 ifdi_timer.9 \
+	iflibdd.9 ifdi_txq_setup.9 \
+	iflibdd.9 ifdi_update_admin_status.9 \
+	iflibdd.9 ifdi_vf_add.9 \
+	iflibdd.9 ifdi_vflr_handle.9 \
+	iflibdd.9 ifdi_vlan_register.9 \
+	iflibdd.9 ifdi_vlan_unregister.9 \
+	iflibdd.9 ifdi_watchdog_reset.9 \
+	iflibdd.9 iov_init.9 \
+	iflibdd.9 iov_uinit.9
+MLINKS+=iflibdi.9 iflib_add_int_delay_sysctl.9 \
+	iflibdi.9 iflib_device_attach.9 \
+	iflibdi.9 iflib_device_deregister.9 \
+	iflibdi.9 iflib_device_detach.9 \
+	iflibdi.9 iflib_device_suspend.9 \
+	iflibdi.9 iflib_device_register.9 \
+	iflibdi.9 iflib_device_resume.9 \
+	iflibdi.9 iflib_led_create.9 \
+	iflibdi.9 iflib_irq_alloc.9 \
+	iflibdi.9 iflib_irq_alloc_generic.9 \
+	iflibdi.9 iflib_link_intr_deferred.9 \
+	iflibdi.9 iflib_link_state_change.9 \
+	iflibdi.9 iflib_rx_intr_deferred.9 \
+	iflibdi.9 iflib_tx_intr_deferred.9
+MLINKS+=iflibtxrx.9 isc_rxd_available.9 \
+	iflibtxrx.9 isc_rxd_refill.9 \
+	iflibtxrx.9 isc_rxd_flush.9 \
+	iflibtxrx.9 isc_rxd_pkt_get.9 \
+	iflibtxrx.9 isc_txd_credits_update.9 \
+	iflibtxrx.9 isc_txd_encap.9 \
+	iflibtxrx.9 isc_txd_flush.9
 MLINKS+=ifnet.9 if_addmulti.9 \
 	ifnet.9 if_alloc.9 \
 	ifnet.9 if_allmulti.9 \
@@ -1426,6 +1482,9 @@ MLINKS+=random.9 arc4rand.9 \
 	random.9 read_random.9 \
 	random.9 read_random_uio.9 \
 	random.9 srandom.9
+MLINKS+=random_harvest.9 random_harvest_direct.9 \
+	random_harvest.9 random_harvest_fast.9 \
+	random_harvest.9 random_harvest_queue.9
 MLINKS+=refcount.9 refcount_acquire.9 \
 	refcount.9 refcount_init.9 \
 	refcount.9 refcount_release.9
@@ -1511,6 +1570,7 @@ MLINKS+=sbuf.9 sbuf_bcat.9 \
 	sbuf.9 sbuf_bcpy.9 \
 	sbuf.9 sbuf_cat.9 \
 	sbuf.9 sbuf_clear.9 \
+	sbuf.9 sbuf_clear_flags.9 \
 	sbuf.9 sbuf_copyin.9 \
 	sbuf.9 sbuf_cpy.9 \
 	sbuf.9 sbuf_data.9 \
@@ -1518,6 +1578,8 @@ MLINKS+=sbuf.9 sbuf_bcat.9 \
 	sbuf.9 sbuf_done.9 \
 	sbuf.9 sbuf_error.9 \
 	sbuf.9 sbuf_finish.9 \
+	sbuf.9 sbuf_get_flags.9 \
+	sbuf.9 sbuf_hexdump.9 \
 	sbuf.9 sbuf_len.9 \
 	sbuf.9 sbuf_new.9 \
 	sbuf.9 sbuf_new_auto.9 \
@@ -1525,6 +1587,7 @@ MLINKS+=sbuf.9 sbuf_bcat.9 \
 	sbuf.9 sbuf_printf.9 \
 	sbuf.9 sbuf_putc.9 \
 	sbuf.9 sbuf_set_drain.9 \
+	sbuf.9 sbuf_set_flags.9 \
 	sbuf.9 sbuf_setpos.9 \
 	sbuf.9 sbuf_start_section.9 \
 	sbuf.9 sbuf_end_section.9  \
@@ -1572,6 +1635,7 @@ MLINKS+=sglist.9 sglist_alloc.9 \
 	sglist.9 sglist_append_bio.9 \
 	sglist.9 sglist_append_mbuf.9 \
 	sglist.9 sglist_append_phys.9 \
+	sglist.9 sglist_append_sglist.9 \
 	sglist.9 sglist_append_uio.9 \
 	sglist.9 sglist_append_user.9 \
 	sglist.9 sglist_append_vmpages.9 \
@@ -1847,6 +1911,7 @@ MLINKS+=uidinfo.9 uifind.9 \
 	uidinfo.9 uihashinit.9 \
 	uidinfo.9 uihold.9
 MLINKS+=uio.9 uiomove.9 \
+	uio.9 uiomove_frombuf.9 \
 	uio.9 uiomove_nofault.9
 
 .if ${MK_USB} != "no"
@@ -1992,7 +2057,6 @@ MLINKS+=vrele.9 vput.9 \
 	vrele.9 vunref.9
 MLINKS+=vslock.9 vsunlock.9
 MLINKS+=zone.9 uma.9 \
-	zone.9 uma_find_refcnt.9 \
 	zone.9 uma_zalloc.9 \
 	zone.9 uma_zalloc_arg.9 \
 	zone.9 uma_zcreate.9 \

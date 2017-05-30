@@ -13,7 +13,8 @@ BINDIR=	${TESTSDIR}
 PROGS+=	libarchive_test
 
 CFLAGS+= -I${.CURDIR} -I${.CURDIR:H} -I${.OBJDIR}
-CFLAGS+= -I${_LIBARCHIVEDIR}/libarchive -I${_LIBARCHIVEDIR}/test_utils
+CFLAGS+= -I${_LIBARCHIVEDIR}/libarchive -I${_LIBARCHIVEDIR}/libarchive/test
+CFLAGS+= -I${_LIBARCHIVEDIR}/test_utils
 CFLAGS+= -DHAVE_LIBLZMA=1 -DHAVE_LZMA_H=1
 
 # Uncomment to link against dmalloc
@@ -22,10 +23,10 @@ CFLAGS+= -DHAVE_LIBLZMA=1 -DHAVE_LZMA_H=1
 
 .PATH: ${_LIBARCHIVEDIR}/libarchive/test
 TESTS_SRCS= \
-	test_acl_freebsd_nfs4.c			\
-	test_acl_freebsd_posix1e.c		\
 	test_acl_nfs4.c				\
 	test_acl_pax.c				\
+	test_acl_platform_nfs4.c		\
+	test_acl_platform_posix1e.c		\
 	test_acl_posix1e.c			\
 	test_acl_text.c				\
 	test_archive_api_feature.c		\
@@ -194,6 +195,7 @@ TESTS_SRCS= \
 	test_read_format_zip_traditional_encryption_data.c	\
 	test_read_format_zip_winzip_aes.c	\
 	test_read_format_zip_winzip_aes_large.c	\
+	test_read_format_zip_with_invalid_traditional_eocd.c	\
 	test_read_format_zip_zip64.c		\
 	test_read_large.c			\
 	test_read_pax_schily_xattr.c		\
@@ -283,6 +285,7 @@ TESTS_SRCS= \
 	test_write_format_zip_zip64.c		\
 	test_write_open_memory.c		\
 	test_write_read_format_zip.c		\
+	test_xattr_platform.c			\
 	test_zip_filename_encoding.c
 
 # Deterministic failures:
@@ -302,14 +305,14 @@ BROKEN_TESTS+=			test_fuzz_rar
 # Build the test program.
 SRCS.libarchive_test=		\
 	${TESTS_SRCS}		\
-	main.c			\
 	read_open_memory.c	\
 	list.h
 
 LIBADD.libarchive_test=	archive
 
 .PATH: ${_LIBARCHIVEDIR}/test_utils
-SRCS.libarchive_test+=	test_utils.c
+SRCS.libarchive_test+=	test_main.c	\
+			test_utils.c
 
 # list.h is just a list of all tests, as indicated by DEFINE_TEST macro lines
 list.h: ${TESTS_SRCS} Makefile
@@ -539,6 +542,7 @@ ${PACKAGE}FILES+=	test_read_format_zip_sfx.uu
 ${PACKAGE}FILES+=	test_read_format_zip_symlink.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_traditional_encryption_data.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_ux.zip.uu
+${PACKAGE}FILES+=	test_read_format_zip_with_invalid_traditional_eocd.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_winzip_aes128.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_winzip_aes256.zip.uu
 ${PACKAGE}FILES+=	test_read_format_zip_winzip_aes256_large.zip.uu

@@ -221,7 +221,14 @@ const char* acltext[] = {
 	"group:group78:r-----a-R-c---:------I:allow:78\n"
 	"owner@:rwxp--aARWcCo-:-------:allow\n"
 	"group@:rw-p--a-R-c---:-------:allow\n"
-	"everyone@:r-----a-R-c--s:-------:allow"
+	"everyone@:r-----a-R-c--s:-------:allow",
+
+	"user:user77:rwpaRco::allow:77\n"
+	"user:user101:wpdD:fdin:deny:101\n"
+	"group:group78:raRc:I:allow:78\n"
+	"owner@:rwxpaARWcCo::allow\n"
+	"group@:rwpaRc::allow\n"
+	"everyone@:raRcs::allow"
 };
 
 static wchar_t *
@@ -242,8 +249,8 @@ convert_s_to_ws(const char *s)
 static void
 compare_acl_text(struct archive_entry *ae, int flags, const char *s)
 {
-	const char *text;
-	const wchar_t *wtext;
+	char *text;
+	wchar_t *wtext;
 	wchar_t *ws;
 	ssize_t slen;
 
@@ -257,9 +264,10 @@ compare_acl_text(struct archive_entry *ae, int flags, const char *s)
 	assertEqualWString(wtext, ws);
 	if (wtext != NULL) {
 		assertEqualInt(wcslen(wtext), slen);
-		free(ws);
-		ws = NULL;
 	}
+	free(text);
+	free(wtext);
+	free(ws);
 }
 
 DEFINE_TEST(test_acl_from_text)
@@ -274,7 +282,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text(ae, acltext[5],
 	    ARCHIVE_ENTRY_ACL_TYPE_ACCESS));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_ACCESS, 0755);
 	assertEqualInt(6, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_ACCESS));
@@ -283,7 +291,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text(ae, acltext[7],
 	    ARCHIVE_ENTRY_ACL_TYPE_DEFAULT));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E, 0755);
 	assertEqualInt(11, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
@@ -295,7 +303,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text_w(ae, ws,
 	    ARCHIVE_ENTRY_ACL_TYPE_ACCESS));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_ACCESS, 0755);
 	assertEqualInt(6, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_ACCESS));
@@ -306,7 +314,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text_w(ae, ws,
 	    ARCHIVE_ENTRY_ACL_TYPE_DEFAULT));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E, 0755);
 	assertEqualInt(11, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
@@ -316,7 +324,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text(ae, acltext[7],
 	    ARCHIVE_ENTRY_ACL_TYPE_DEFAULT));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_DEFAULT, 0);
 	assertEqualInt(5, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_DEFAULT));
@@ -326,7 +334,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text_w(ae, ws,
 	    ARCHIVE_ENTRY_ACL_TYPE_DEFAULT));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_DEFAULT, 0);
 	assertEqualInt(5, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_DEFAULT));
@@ -336,7 +344,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text(ae, acltext[1],
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E, 0755);
 	assertEqualInt(11, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
@@ -347,7 +355,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text_w(ae, ws,
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E, 0755);
 	assertEqualInt(11, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
@@ -357,7 +365,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text(ae, acltext[2],
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E, 0755);
 	assertEqualInt(11, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
@@ -368,7 +376,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text_w(ae, ws,
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
-	archive_test_compare_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
+	assertEntryCompareAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E, 0755);
 	assertEqualInt(11, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_POSIX1E));
@@ -378,7 +386,7 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text(ae, acltext[10],
 	    ARCHIVE_ENTRY_ACL_TYPE_NFS4));
-	archive_test_compare_acls(ae, acls1, sizeof(acls1)/sizeof(acls1[0]),
+	assertEntryCompareAcls(ae, acls1, sizeof(acls1)/sizeof(acls1[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_NFS4, 0);
 	assertEqualInt(6, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_NFS4));
@@ -390,11 +398,14 @@ DEFINE_TEST(test_acl_from_text)
 	assertEqualInt(ARCHIVE_OK,
 	    archive_entry_acl_from_text_w(ae, ws,
 	    ARCHIVE_ENTRY_ACL_TYPE_NFS4));
-	archive_test_compare_acls(ae, acls1, sizeof(acls1)/sizeof(acls1[0]),
+	assertEntryCompareAcls(ae, acls1, sizeof(acls1)/sizeof(acls1[0]),
 	    ARCHIVE_ENTRY_ACL_TYPE_NFS4, 0);
 	assertEqualInt(6, archive_entry_acl_reset(ae,
 	    ARCHIVE_ENTRY_ACL_TYPE_NFS4));
 	archive_entry_acl_clear(ae);
+
+	free(ws);
+	archive_entry_free(ae);
 }
 
 DEFINE_TEST(test_acl_to_text)
@@ -405,7 +416,7 @@ DEFINE_TEST(test_acl_to_text)
 	assert((ae = archive_entry_new()) != NULL);
 
 	/* Write POSIX.1e ACLs  */
-	archive_test_set_acls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]));
+	assertEntrySetAcls(ae, acls0, sizeof(acls0)/sizeof(acls0[0]));
 
 	/* No flags should give output like getfacl(1) on linux */
 	compare_acl_text(ae, 0, acltext[0]);
@@ -446,11 +457,17 @@ DEFINE_TEST(test_acl_to_text)
 	    ARCHIVE_ENTRY_ACL_STYLE_MARK_DEFAULT, acltext[8]);
 
 	/* Write NFSv4 ACLs */
-	archive_test_set_acls(ae, acls1, sizeof(acls1)/sizeof(acls1[0]));
+	assertEntrySetAcls(ae, acls1, sizeof(acls1)/sizeof(acls1[0]));
 
 	/* NFSv4 ACLs like getfacl(1) on FreeBSD */
 	compare_acl_text(ae, 0, acltext[9]);
 
 	/* NFSv4 ACLs like "getfacl -i" on FreeBSD */
 	compare_acl_text(ae, ARCHIVE_ENTRY_ACL_STYLE_EXTRA_ID, acltext[10]);
+
+	/* NFSv4 ACLs like "getfacl -i" on FreeBSD with stripped minus chars */
+	compare_acl_text(ae, ARCHIVE_ENTRY_ACL_STYLE_EXTRA_ID |
+	    ARCHIVE_ENTRY_ACL_STYLE_COMPACT, acltext[11]);
+
+	archive_entry_free(ae);
 }

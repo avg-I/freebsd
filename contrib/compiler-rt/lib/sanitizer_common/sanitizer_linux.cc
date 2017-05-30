@@ -99,7 +99,7 @@ const int FUTEX_WAKE = 1;
 # define SANITIZER_LINUX_USES_64BIT_SYSCALLS 0
 #endif
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || SANITIZER_MIPS64
 extern "C" {
 extern void internal_sigreturn();
 }
@@ -223,7 +223,8 @@ static void kernel_stat_to_stat(struct kernel_stat *in, struct stat *out) {
 
 uptr internal_stat(const char *path, void *buf) {
 #if SANITIZER_FREEBSD
-  return internal_syscall(SYSCALL(stat), path, buf);
+  return internal_syscall(SYSCALL(fstatat), AT_FDCWD, (uptr)path,
+                          (uptr)buf, 0);
 #elif SANITIZER_USES_CANONICAL_LINUX_SYSCALLS
   return internal_syscall(SYSCALL(newfstatat), AT_FDCWD, (uptr)path,
                           (uptr)buf, 0);
@@ -247,7 +248,8 @@ uptr internal_stat(const char *path, void *buf) {
 
 uptr internal_lstat(const char *path, void *buf) {
 #if SANITIZER_FREEBSD
-  return internal_syscall(SYSCALL(lstat), path, buf);
+  return internal_syscall(SYSCALL(fstatat), AT_FDCWD, (uptr)path,
+                         (uptr)buf, AT_SYMLINK_NOFOLLOW);
 #elif SANITIZER_USES_CANONICAL_LINUX_SYSCALLS
   return internal_syscall(SYSCALL(newfstatat), AT_FDCWD, (uptr)path,
                          (uptr)buf, AT_SYMLINK_NOFOLLOW);
@@ -590,7 +592,9 @@ uptr internal_getppid() {
 }
 
 uptr internal_getdents(fd_t fd, struct linux_dirent *dirp, unsigned int count) {
-#if SANITIZER_USES_CANONICAL_LINUX_SYSCALLS
+#if SANITIZER_FREEBSD
+  return internal_syscall(SYSCALL(getdirentries), fd, (uptr)dirp, count, NULL);
+#elif SANITIZER_USES_CANONICAL_LINUX_SYSCALLS
   return internal_syscall(SYSCALL(getdents64), fd, (uptr)dirp, count);
 #else
   return internal_syscall(SYSCALL(getdents), fd, (uptr)dirp, count);
@@ -671,7 +675,7 @@ int internal_sigaction_norestorer(int signum, const void *act, void *oldact) {
 // Invokes sigaction via a raw syscall with a restorer, but does not support
 // all platforms yet.
 // We disable for Go simply because we have not yet added to buildgo.sh.
-#if defined(__x86_64__) && !SANITIZER_GO
+#if (defined(__x86_64__) || SANITIZER_MIPS64) && !SANITIZER_GO
 int internal_sigaction_syscall(int signum, const void *act, void *oldact) {
   if (act == nullptr)
     return internal_sigaction_norestorer(signum, act, oldact);
@@ -801,8 +805,9 @@ bool ThreadLister::GetDirectoryEntries() {
 
 uptr GetPageSize() {
 // Android post-M sysconf(_SC_PAGESIZE) crashes if called from .preinit_array.
-#if (SANITIZER_LINUX && (defined(__x86_64__) || defined(__i386__))) || \
-    SANITIZER_ANDROID
+#if SANITIZER_ANDROID
+  return 4096;
+#elif SANITIZER_LINUX && (defined(__x86_64__) || defined(__i386__))
   return EXEC_PAGESIZE;
 #else
   return sysconf(_SC_PAGESIZE);  // EXEC_PAGESIZE may not be trustworthy.
@@ -1229,7 +1234,7 @@ bool IsHandledDeadlySignal(int signum) {
   return (signum == SIGSEGV || signum == SIGBUS) && common_flags()->handle_segv;
 }
 
-#ifndef SANITIZER_GO
+#if !SANITIZER_GO
 void *internal_start_thread(void(*func)(void *arg), void *arg) {
   // Start the thread with signals blocked, otherwise it can steal user signals.
   __sanitizer_sigset_t set, old;
@@ -1291,10 +1296,6 @@ SignalContext::WriteFlag SignalContext::GetWriteFlag(void *context) {
 #elif defined(__arm__)
   static const uptr FSR_WRITE = 1U << 11;
   uptr fsr = ucontext->uc_mcontext.error_code;
-  // FSR bits 5:0 describe the abort type, and are never 0 (or so it seems).
-  // Zero FSR indicates an older kernel that does not pass this information to
-  // the userspace.
-  if (fsr == 0) return UNKNOWN;
   return fsr & FSR_WRITE ? WRITE : READ;
 #elif defined(__aarch64__)
   static const u64 ESR_ELx_WNR = 1U << 6;
@@ -1305,6 +1306,10 @@ SignalContext::WriteFlag SignalContext::GetWriteFlag(void *context) {
   (void)ucontext;
   return UNKNOWN;  // FIXME: Implement.
 #endif
+}
+
+void SignalContext::DumpAllRegisters(void *context) {
+  // FIXME: Implement this.
 }
 
 void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
@@ -1390,6 +1395,13 @@ void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
 
 void MaybeReexec() {
   // No need to re-exec on Linux.
+}
+
+void PrintModuleMap() { }
+
+uptr FindAvailableMemoryRange(uptr size, uptr alignment, uptr left_padding) {
+  UNREACHABLE("FindAvailableMemoryRange is not available");
+  return 0;
 }
 
 } // namespace __sanitizer

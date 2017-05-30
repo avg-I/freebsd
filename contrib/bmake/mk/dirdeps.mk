@@ -1,4 +1,4 @@
-# $Id: dirdeps.mk,v 1.84 2016/11/27 02:44:34 sjg Exp $
+# $Id: dirdeps.mk,v 1.88 2017/04/24 20:34:59 sjg Exp $
 
 # Copyright (c) 2010-2013, Juniper Networks, Inc.
 # All rights reserved.
@@ -57,7 +57,7 @@
 #	distinguish them from others.
 #	
 #	Before each Makefile.depend file is read, we set 
-#	DEP_RELDIR to be the the RELDIR (path relative to SRCTOP) for
+#	DEP_RELDIR to be the RELDIR (path relative to SRCTOP) for
 #	its directory, and DEP_MACHINE etc according to the .<target_spec>
 #	represented by the suffix of the corresponding target.
 #	
@@ -137,6 +137,14 @@
 #		built for.
 #
 
+.if !target(bootstrap) && (make(bootstrap) || \
+	make(bootstrap-this) || \
+	make(bootstrap-recurse) || \
+	make(bootstrap-empty))
+# disable most of below
+.MAKE.LEVEL = 1
+.endif
+
 # touch this at your peril
 _DIRDEP_USE_LEVEL?= 0
 .if ${.MAKE.LEVEL} == ${_DIRDEP_USE_LEVEL}
@@ -197,7 +205,9 @@ DEP_$v ?= ${$v}
 # we compute below are fully qualified wrt DEP_TARGET_SPEC.
 # The makefiles may only partially specify (eg. MACHINE only),
 # so we need to construct a set of modifiers to fill in the gaps.
-.if ${TARGET_SPEC_VARS:[#]} > 10
+.if ${MAKE_VERSION} >= 20170130
+_tspec_x := ${TARGET_SPEC_VARS:range}
+.elif ${TARGET_SPEC_VARS:[#]} > 10
 # seriously? better have jot(1) or equivalent to produce suitable sequence
 _tspec_x := ${${JOT:Ujot} ${TARGET_SPEC_VARS:[#]}:L:sh}
 .else
@@ -612,10 +622,10 @@ _build_dirs += \
 # qualify everything now
 _build_dirs := ${_build_dirs:${M_dep_qual_fixes:ts:}:O:u}
 
+.endif				# empty DIRDEPS
+
 _build_all_dirs += ${_build_dirs}
 _build_all_dirs := ${_build_all_dirs:O:u}
-
-.endif				# empty DIRDEPS
 
 # Normally if doing make -V something,
 # we do not want to waste time chasing DIRDEPS
@@ -755,7 +765,7 @@ bootstrap-this:	.NOTMAIN
 	@echo Bootstrapping ${RELDIR}/${_want:T} from ${_src:T}; \
 	echo You need to build ${RELDIR} to correctly populate it.
 .if ${_src:T} != ${.MAKE.DEPENDFILE_PREFIX:T}
-	(cd ${.CURDIR} && sed ${.MAKE.DEPENDFILE_BOOTSTRAP_SED} ${_src} > ${_want})
+	(cd ${.CURDIR} && sed ${.MAKE.DEPENDFILE_BOOTSTRAP_SED} ${_src} > ${_want:T})
 .else
 	cp ${.CURDIR}/${_src:T} ${_want}
 .endif

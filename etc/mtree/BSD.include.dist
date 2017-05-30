@@ -130,6 +130,8 @@
         ..
         mfi
         ..
+        mmc
+        ..
         mpt
             mpilib
             ..
@@ -153,8 +155,6 @@
         speaker
         ..
         usb
-        ..
-        utopia
         ..
         vkbd
         ..

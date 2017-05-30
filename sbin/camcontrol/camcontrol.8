@@ -27,7 +27,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd January 20, 2017
+.Dd May 3, 2017
 .Dt CAMCONTROL 8
 .Os
 .Sh NAME
@@ -102,10 +102,10 @@
 .Op device id
 .Nm
 .Ic rescan
-.Aq all | bus Ns Op :target:lun
+.Aq all | device id | bus Ns Op :target:lun
 .Nm
 .Ic reset
-.Aq all | bus Ns Op :target:lun
+.Aq all | device id | bus Ns Op :target:lun
 .Nm
 .Ic defects
 .Op device id
@@ -422,6 +422,17 @@ It may take some other actions, depending upon the sense code returned from
 the command.
 .It Fl n Ar dev_name
 Specify the device type to operate on, e.g.\& "da", "cd".
+.It Fl Q Ar task_attr
+.Tn SCSI
+task attribute for the command, if it is a
+.Tn SCSI
+command.
+This may be ordered, simple, head, or aca.
+In most cases this is not needed.
+The default is simple, which works with all
+.Tn SCSI
+devices.
+The task attribute may also be specified numerically.
 .It Fl t Ar timeout
 SCSI command timeout in seconds.
 This overrides the default timeout for
@@ -567,12 +578,20 @@ start bit cleared and the load/eject bit set.
 .It Ic rescan
 Tell the kernel to scan all buses in the system (with the
 .Ar all
-argument), the given bus (XPT_SCAN_BUS), or bus:target:lun
+argument), the given bus (XPT_SCAN_BUS), bus:target:lun or device
 (XPT_SCAN_LUN) for new devices or devices that have gone away.
 The user
 may specify a scan of all buses, a single bus, or a lun.
 Scanning all luns
 on a target is not supported.
+.Pp
+If a device is specified by peripheral name and unit number, for instance
+da4, it may only be rescanned if that device currently exists in the CAM EDT
+(Existing Device Table).
+If the device is no longer there (see
+.Nm
+devlist ),
+you must use the bus:target:lun form to rescan it.
 .It Ic reprobe
 Tell the kernel to refresh the information about the device and
 notify the upper layer,
@@ -582,8 +601,8 @@ the disk size visible to the rest of the system.
 .It Ic reset
 Tell the kernel to reset all buses in the system (with the
 .Ar all
-argument) or the given bus (XPT_RESET_BUS) by issuing a SCSI bus
-reset for that bus, or to reset the given bus:target:lun
+argument), the given bus (XPT_RESET_BUS) by issuing a SCSI bus
+reset for that bus, or to reset the given bus:target:lun or device
 (XPT_RESET_DEV), typically by issuing a BUS DEVICE RESET message after
 connecting to that device.
 Note that this can have a destructive impact
@@ -2477,7 +2496,7 @@ Specify the strptime format string, as documented in strptime(3).
 The time must also be specified with the
 .Fl T 
 option.
-.It Fl T
+.It Fl T Ar time
 Provide the time in the format specified with the
 .Fl f
 option.
@@ -2523,7 +2542,7 @@ information if the command fails since the
 .Fl v
 switch was not specified.
 .Bd -literal -offset indent
-camcontrol tur da1 -E -C 4 -t 50 -v
+camcontrol tur da1 -E -C 4 -t 50 -Q head -v
 .Ed
 .Pp
 Send a test unit ready command to da1.
@@ -2535,6 +2554,9 @@ printing (with the
 flag) if the command fails.
 Since error recovery is turned on, the
 disk will be spun up if it is not currently spinning.
+The
+.Tn SCSI
+task attribute for the command will be set to Head of Queue.
 The
 .Nm
 utility will report whether the disk is ready.
@@ -2800,8 +2822,8 @@ drive
 .Pa ada0 .
 .Pp
 .Bd -literal -offset indent
-camcontrol timestamp sa0 -s -f "%A %c" \e
-	-T "Wednesday Wed Oct 26 21:43:57 2016"
+camcontrol timestamp sa0 -s -f "%a, %d %b %Y %T %z" \e
+	-T "Wed, 26 Oct 2016 21:43:57 -0600"
 .Ed
 .Pp
 Set the timestamp of drive

@@ -10,7 +10,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -84,10 +84,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/sctp_crc32.h>
 #endif
 
-#ifdef IPSEC
-#include <netinet/ip_ipsec.h>
-#include <netipsec/ipsec.h>
-#endif /* IPSEC*/
+#include <netipsec/ipsec_support.h>
 
 #include <machine/in_cksum.h>
 
@@ -228,7 +225,7 @@ ip_output(struct mbuf *m, struct mbuf *opt, struct route *ro, int flags,
 	struct rtentry *rte;	/* cache for ro->ro_rt */
 	uint32_t fibnum;
 	int have_ia_ref;
-#ifdef IPSEC
+#if defined(IPSEC) || defined(IPSEC_SUPPORT)
 	int no_route_but_check_spd = 0;
 #endif
 	M_ASSERTPKTHDR(m);
@@ -245,8 +242,7 @@ ip_output(struct mbuf *m, struct mbuf *opt, struct route *ro, int flags,
 	if (ro == NULL) {
 		ro = &iproute;
 		bzero(ro, sizeof (*ro));
-	} else
-		ro->ro_flags |= RT_LLE_CACHE;
+	}
 
 #ifdef FLOWTABLE
 	if (ro->ro_rt == NULL)
@@ -384,7 +380,7 @@ again:
 		    (rte->rt_flags & RTF_UP) == 0 ||
 		    rte->rt_ifp == NULL ||
 		    !RT_LINK_IS_UP(rte->rt_ifp)) {
-#ifdef IPSEC
+#if defined(IPSEC) || defined(IPSEC_SUPPORT)
 			/*
 			 * There is no route for this packet, but it is
 			 * possible that a matching SPD entry exists.
@@ -556,15 +552,13 @@ again:
 	}
 
 sendit:
-#ifdef IPSEC
-	switch(ip_ipsec_output(&m, inp, &error)) {
-	case 1:
-		goto bad;
-	case -1:
-		goto done;
-	case 0:
-	default:
-		break;	/* Continue with packet processing. */
+#if defined(IPSEC) || defined(IPSEC_SUPPORT)
+	if (IPSEC_ENABLED(ipv4)) {
+		if ((error = IPSEC_OUTPUT(ipv4, m, inp)) != 0) {
+			if (error == EINPROGRESS)
+				error = 0;
+			goto done;
+		}
 	}
 	/*
 	 * Check if there was a route for this packet; return error if not.
@@ -1070,6 +1064,7 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 		case IP_MINTTL:
 		case IP_RECVOPTS:
 		case IP_RECVRETOPTS:
+		case IP_ORIGDSTADDR:
 		case IP_RECVDSTADDR:
 		case IP_RECVTTL:
 		case IP_RECVIF:
@@ -1129,6 +1124,10 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 
 			case IP_RECVDSTADDR:
 				OPTSET(INP_RECVDSTADDR);
+				break;
+
+			case IP_ORIGDSTADDR:
+				OPTSET2(INP_ORIGDSTADDR, optval);
 				break;
 
 			case IP_RECVTTL:
@@ -1230,23 +1229,13 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 			INP_WUNLOCK(inp);
 			break;
 
-#ifdef IPSEC
+#if defined(IPSEC) || defined(IPSEC_SUPPORT)
 		case IP_IPSEC_POLICY:
-		{
-			caddr_t req;
-			struct mbuf *m;
-
-			if ((error = soopt_getm(sopt, &m)) != 0) /* XXX */
+			if (IPSEC_ENABLED(ipv4)) {
+				error = IPSEC_PCBCTL(ipv4, inp, sopt);
 				break;
-			if ((error = soopt_mcopyin(sopt, m)) != 0) /* XXX */
-				break;
-			req = mtod(m, caddr_t);
-			error = ipsec_set_policy(inp, sopt->sopt_name, req,
-			    m->m_len, (sopt->sopt_td != NULL) ?
-			    sopt->sopt_td->td_ucred : NULL);
-			m_freem(m);
-			break;
-		}
+			}
+			/* FALLTHROUGH */
 #endif /* IPSEC */
 
 		default:
@@ -1273,6 +1262,7 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 		case IP_MINTTL:
 		case IP_RECVOPTS:
 		case IP_RECVRETOPTS:
+		case IP_ORIGDSTADDR:
 		case IP_RECVDSTADDR:
 		case IP_RECVTTL:
 		case IP_RECVIF:
@@ -1316,6 +1306,10 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 
 			case IP_RECVDSTADDR:
 				optval = OPTBIT(INP_RECVDSTADDR);
+				break;
+
+			case IP_ORIGDSTADDR:
+				optval = OPTBIT2(INP_ORIGDSTADDR);
 				break;
 
 			case IP_RECVTTL:
@@ -1389,24 +1383,13 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = inp_getmoptions(inp, sopt);
 			break;
 
-#ifdef IPSEC
+#if defined(IPSEC) || defined(IPSEC_SUPPORT)
 		case IP_IPSEC_POLICY:
-		{
-			struct mbuf *m = NULL;
-			caddr_t req = NULL;
-			size_t len = 0;
-
-			if (m != NULL) {
-				req = mtod(m, caddr_t);
-				len = m->m_len;
+			if (IPSEC_ENABLED(ipv4)) {
+				error = IPSEC_PCBCTL(ipv4, inp, sopt);
+				break;
 			}
-			error = ipsec_get_policy(sotoinpcb(so), req, len, &m);
-			if (error == 0)
-				error = soopt_mcopyout(sopt, m); /* XXX */
-			if (error == 0)
-				m_freem(m);
-			break;
-		}
+			/* FALLTHROUGH */
 #endif /* IPSEC */
 
 		default:

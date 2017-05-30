@@ -28,7 +28,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -120,10 +120,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/tcp_offload.h>
 #endif
 
-#ifdef IPSEC
-#include <netipsec/ipsec.h>
-#include <netipsec/ipsec6.h>
-#endif /*IPSEC*/
+#include <netipsec/ipsec_support.h>
 
 #include <machine/in_cksum.h>
 
@@ -487,20 +484,6 @@ cc_post_recovery(struct tcpcb *tp, struct tcphdr *th)
 	tp->t_bytes_acked = 0;
 }
 
-#ifdef TCP_SIGNATURE
-static inline int
-tcp_signature_verify_input(struct mbuf *m, int off0, int tlen, int optlen,
-    struct tcpopt *to, struct tcphdr *th, u_int tcpbflag)
-{
-	int ret;
-
-	tcp_fields_to_net(th);
-	ret = tcp_signature_verify(m, off0, tlen, optlen, to, th, tcpbflag);
-	tcp_fields_to_host(th);
-	return (ret);
-}
-#endif
-
 /*
  * Indicate whether this ack should be delayed.  We can delay the ack if
  * following conditions are met:
@@ -611,9 +594,6 @@ tcp_input(struct mbuf **mp, int *offp, int proto)
 	int drop_hdrlen;
 	int thflags;
 	int rstreason = 0;	/* For badport_bandlim accounting purposes */
-#ifdef TCP_SIGNATURE
-	uint8_t sig_checked = 0;
-#endif
 	uint8_t iptos;
 	struct m_tag *fwd_tag = NULL;
 #ifdef INET6
@@ -944,15 +924,22 @@ findpcb:
 		inp->inp_flowid = m->m_pkthdr.flowid;
 		inp->inp_flowtype = M_HASHTYPE_GET(m);
 	}
-#ifdef IPSEC
+#if defined(IPSEC) || defined(IPSEC_SUPPORT)
 #ifdef INET6
-	if (isipv6 && ipsec6_in_reject(m, inp)) {
-		goto dropunlock;
-	} else
-#endif /* INET6 */
-	if (ipsec4_in_reject(m, inp) != 0) {
+	if (isipv6 && IPSEC_ENABLED(ipv6) &&
+	    IPSEC_CHECK_POLICY(ipv6, m, inp) != 0) {
 		goto dropunlock;
 	}
+#ifdef INET
+	else
+#endif
+#endif /* INET6 */
+#ifdef INET
+	if (IPSEC_ENABLED(ipv4) &&
+	    IPSEC_CHECK_POLICY(ipv4, m, inp) != 0) {
+		goto dropunlock;
+	}
+#endif /* INET */
 #endif /* IPSEC */
 
 	/*
@@ -1135,7 +1122,16 @@ relocked:
 			 * NB: syncache_expand() doesn't unlock
 			 * inp and tcpinfo locks.
 			 */
-			if (!syncache_expand(&inc, &to, th, &so, m)) {
+			rstreason = syncache_expand(&inc, &to, th, &so, m);
+			if (rstreason < 0) {
+				/*
+				 * A failing TCP MD5 signature comparison
+				 * must result in the segment being dropped
+				 * and must not produce any response back
+				 * to the sender.
+				 */
+				goto dropunlock;
+			} else if (rstreason == 0) {
 				/*
 				 * No syncache entry or ACK was not
 				 * for our SYN/ACK.  Send a RST.
@@ -1187,26 +1183,6 @@ tfo_socket_result:
 			tp = intotcpcb(inp);
 			KASSERT(tp->t_state == TCPS_SYN_RECEIVED,
 			    ("%s: ", __func__));
-#ifdef TCP_SIGNATURE
-			if (sig_checked == 0)  {
-				tcp_dooptions(&to, optp, optlen,
-				    (thflags & TH_SYN) ? TO_SYN : 0);
-				if (!tcp_signature_verify_input(m, off0, tlen,
-				    optlen, &to, th, tp->t_flags)) {
-
-					/*
-					 * In SYN_SENT state if it receives an
-					 * RST, it is allowed for further
-					 * processing.
-					 */
-					if ((thflags & TH_RST) == 0 ||
-					    (tp->t_state == TCPS_SYN_SENT) == 0)
-						goto dropunlock;
-				}
-				sig_checked = 1;
-			}
-#endif
-
 			/*
 			 * Process the segment and the data it
 			 * contains.  tcp_do_segment() consumes
@@ -1436,26 +1412,18 @@ tfo_socket_result:
 		 */
 		goto dropunlock;
 	}
-
-#ifdef TCP_SIGNATURE
-	if (sig_checked == 0)  {
-		tcp_dooptions(&to, optp, optlen,
-		    (thflags & TH_SYN) ? TO_SYN : 0);
-		if (!tcp_signature_verify_input(m, off0, tlen, optlen, &to,
-		    th, tp->t_flags)) {
-
-			/*
-			 * In SYN_SENT state if it receives an RST, it is
-			 * allowed for further processing.
-			 */
-			if ((thflags & TH_RST) == 0 ||
-			    (tp->t_state == TCPS_SYN_SENT) == 0)
-				goto dropunlock;
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+	if (tp->t_flags & TF_SIGNATURE) {
+		tcp_dooptions(&to, optp, optlen, thflags);
+		if ((to.to_flags & TOF_SIGNATURE) == 0) {
+			TCPSTAT_INC(tcps_sig_err_nosigopt);
+			goto dropunlock;
 		}
-		sig_checked = 1;
+		if (!TCPMD5_ENABLED() ||
+		    TCPMD5_INPUT(m, th, to.to_signature) != 0)
+			goto dropunlock;
 	}
 #endif
-
 	TCP_PROBE5(receive, NULL, tp, m, tp, th);
 
 	/*
@@ -1516,6 +1484,68 @@ drop:
 	if (m != NULL)
 		m_freem(m);
 	return (IPPROTO_DONE);
+}
+
+/*
+ * Automatic sizing of receive socket buffer.  Often the send
+ * buffer size is not optimally adjusted to the actual network
+ * conditions at hand (delay bandwidth product).  Setting the
+ * buffer size too small limits throughput on links with high
+ * bandwidth and high delay (eg. trans-continental/oceanic links).
+ *
+ * On the receive side the socket buffer memory is only rarely
+ * used to any significant extent.  This allows us to be much
+ * more aggressive in scaling the receive socket buffer.  For
+ * the case that the buffer space is actually used to a large
+ * extent and we run out of kernel memory we can simply drop
+ * the new segments; TCP on the sender will just retransmit it
+ * later.  Setting the buffer size too big may only consume too
+ * much kernel memory if the application doesn't read() from
+ * the socket or packet loss or reordering makes use of the
+ * reassembly queue.
+ *
+ * The criteria to step up the receive buffer one notch are:
+ *  1. Application has not set receive buffer size with
+ *     SO_RCVBUF. Setting SO_RCVBUF clears SB_AUTOSIZE.
+ *  2. the number of bytes received during the time it takes
+ *     one timestamp to be reflected back to us (the RTT);
+ *  3. received bytes per RTT is within seven eighth of the
+ *     current socket buffer size;
+ *  4. receive buffer size has not hit maximal automatic size;
+ *
+ * This algorithm does one step per RTT at most and only if
+ * we receive a bulk stream w/o packet losses or reorderings.
+ * Shrinking the buffer during idle times is not necessary as
+ * it doesn't consume any memory when idle.
+ *
+ * TODO: Only step up if the application is actually serving
+ * the buffer to better manage the socket buffer resources.
+ */
+int
+tcp_autorcvbuf(struct mbuf *m, struct tcphdr *th, struct socket *so,
+    struct tcpcb *tp, int tlen)
+{
+	int newsize = 0;
+
+	if (V_tcp_do_autorcvbuf && (so->so_rcv.sb_flags & SB_AUTOSIZE) &&
+	    tp->t_srtt != 0 && tp->rfbuf_ts != 0 &&
+	    TCP_TS_TO_TICKS(tcp_ts_getticks() - tp->rfbuf_ts) >
+	    (tp->t_srtt >> TCP_RTT_SHIFT)) {
+		if (tp->rfbuf_cnt > (so->so_rcv.sb_hiwat / 8 * 7) &&
+		    so->so_rcv.sb_hiwat < V_tcp_autorcvbuf_max) {
+			newsize = min(so->so_rcv.sb_hiwat +
+			    V_tcp_autorcvbuf_inc, V_tcp_autorcvbuf_max);
+		}
+		TCP_PROBE6(receive__autoresize, NULL, tp, m, tp, th, newsize);
+
+		/* Start over with next RTT. */
+		tp->rfbuf_ts = 0;
+		tp->rfbuf_cnt = 0;
+	} else {
+		tp->rfbuf_cnt += tlen;	/* add up */
+	}
+
+	return (newsize);
 }
 
 void
@@ -1583,6 +1613,26 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	tcp_pcap_add(th, m, &(tp->t_inpkts));
 #endif
 
+	if ((thflags & TH_SYN) && (thflags & TH_FIN) && V_drop_synfin) {
+		if ((s = tcp_log_addrs(inc, th, NULL, NULL))) {
+			log(LOG_DEBUG, "%s; %s: "
+			    "SYN|FIN segment ignored (based on "
+			    "sysctl setting)\n", s, __func__);
+			free(s, M_TCPLOG);
+		}
+		goto drop;
+	}
+
+	/*
+	 * If a segment with the ACK-bit set arrives in the SYN-SENT state
+	 * check SEQ.ACK first.
+	 */
+	if ((tp->t_state == TCPS_SYN_SENT) && (thflags & TH_ACK) &&
+	    (SEQ_LEQ(th->th_ack, tp->iss) || SEQ_GT(th->th_ack, tp->snd_max))) {
+		rstreason = BANDLIM_UNLIMITED;
+		goto dropwithreset;
+	}
+
 	/*
 	 * Segment received on connection.
 	 * Reset idle time and keep-alive timer.
@@ -1632,6 +1682,13 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    (th->th_off << 2) - sizeof(struct tcphdr),
 	    (thflags & TH_SYN) ? TO_SYN : 0);
 
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+	if ((tp->t_flags & TF_SIGNATURE) != 0 &&
+	    (to.to_flags & TOF_SIGNATURE) == 0) {
+		TCPSTAT_INC(tcps_sig_err_sigopt);
+		/* XXX: should drop? */
+	}
+#endif
 	/*
 	 * If echoed timestamp is later than the current time,
 	 * fall back to non RFC1323 RTT calculation.  Normalize
@@ -1874,62 +1931,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 #endif
 			TCP_PROBE3(debug__input, tp, th, m);
 
-		/*
-		 * Automatic sizing of receive socket buffer.  Often the send
-		 * buffer size is not optimally adjusted to the actual network
-		 * conditions at hand (delay bandwidth product).  Setting the
-		 * buffer size too small limits throughput on links with high
-		 * bandwidth and high delay (eg. trans-continental/oceanic links).
-		 *
-		 * On the receive side the socket buffer memory is only rarely
-		 * used to any significant extent.  This allows us to be much
-		 * more aggressive in scaling the receive socket buffer.  For
-		 * the case that the buffer space is actually used to a large
-		 * extent and we run out of kernel memory we can simply drop
-		 * the new segments; TCP on the sender will just retransmit it
-		 * later.  Setting the buffer size too big may only consume too
-		 * much kernel memory if the application doesn't read() from
-		 * the socket or packet loss or reordering makes use of the
-		 * reassembly queue.
-		 *
-		 * The criteria to step up the receive buffer one notch are:
-		 *  1. Application has not set receive buffer size with
-		 *     SO_RCVBUF. Setting SO_RCVBUF clears SB_AUTOSIZE.
-		 *  2. the number of bytes received during the time it takes
-		 *     one timestamp to be reflected back to us (the RTT);
-		 *  3. received bytes per RTT is within seven eighth of the
-		 *     current socket buffer size;
-		 *  4. receive buffer size has not hit maximal automatic size;
-		 *
-		 * This algorithm does one step per RTT at most and only if
-		 * we receive a bulk stream w/o packet losses or reorderings.
-		 * Shrinking the buffer during idle times is not necessary as
-		 * it doesn't consume any memory when idle.
-		 *
-		 * TODO: Only step up if the application is actually serving
-		 * the buffer to better manage the socket buffer resources.
-		 */
-			if (V_tcp_do_autorcvbuf &&
-			    (to.to_flags & TOF_TS) &&
-			    to.to_tsecr &&
-			    (so->so_rcv.sb_flags & SB_AUTOSIZE)) {
-				if (TSTMP_GT(to.to_tsecr, tp->rfbuf_ts) &&
-				    to.to_tsecr - tp->rfbuf_ts < hz) {
-					if (tp->rfbuf_cnt >
-					    (so->so_rcv.sb_hiwat / 8 * 7) &&
-					    so->so_rcv.sb_hiwat <
-					    V_tcp_autorcvbuf_max) {
-						newsize =
-						    min(so->so_rcv.sb_hiwat +
-						    V_tcp_autorcvbuf_inc,
-						    V_tcp_autorcvbuf_max);
-					}
-					/* Start over with next RTT. */
-					tp->rfbuf_ts = 0;
-					tp->rfbuf_cnt = 0;
-				} else
-					tp->rfbuf_cnt += tlen;	/* add up */
-			}
+			newsize = tcp_autorcvbuf(m, th, so, tp, tlen);
 
 			/* Add data to socket buffer. */
 			SOCKBUF_LOCK(&so->so_rcv);
@@ -1970,10 +1972,6 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		win = 0;
 	tp->rcv_wnd = imax(win, (int)(tp->rcv_adv - tp->rcv_nxt));
 
-	/* Reset receive buffer auto scaling when not in bulk receive mode. */
-	tp->rfbuf_ts = 0;
-	tp->rfbuf_cnt = 0;
-
 	switch (tp->t_state) {
 
 	/*
@@ -2013,7 +2011,6 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 
 	/*
 	 * If the state is SYN_SENT:
-	 *	if seg contains an ACK, but not for our SYN, drop the input.
 	 *	if seg contains a RST, then drop the connection.
 	 *	if seg does not contain SYN, then drop it.
 	 * Otherwise this is an acceptable SYN segment
@@ -2026,12 +2023,6 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 *	continue processing rest of data/controls, beginning with URG
 	 */
 	case TCPS_SYN_SENT:
-		if ((thflags & TH_ACK) &&
-		    (SEQ_LEQ(th->th_ack, tp->iss) ||
-		     SEQ_GT(th->th_ack, tp->snd_max))) {
-			rstreason = BANDLIM_UNLIMITED;
-			goto dropwithreset;
-		}
 		if ((thflags & (TH_ACK|TH_RST)) == (TH_ACK|TH_RST)) {
 			TCP_PROBE5(connect__refused, NULL, tp,
 			    m, tp, th);
@@ -3418,20 +3409,19 @@ tcp_dooptions(struct tcpopt *to, u_char *cp, int cnt, int flags)
 			    (char *)&to->to_tsecr, sizeof(to->to_tsecr));
 			to->to_tsecr = ntohl(to->to_tsecr);
 			break;
-#ifdef TCP_SIGNATURE
-		/*
-		 * XXX In order to reply to a host which has set the
-		 * TCP_SIGNATURE option in its initial SYN, we have to
-		 * record the fact that the option was observed here
-		 * for the syncache code to perform the correct response.
-		 */
 		case TCPOPT_SIGNATURE:
+			/*
+			 * In order to reply to a host which has set the
+			 * TCP_SIGNATURE option in its initial SYN, we have
+			 * to record the fact that the option was observed
+			 * here for the syncache code to perform the correct
+			 * response.
+			 */
 			if (optlen != TCPOLEN_SIGNATURE)
 				continue;
 			to->to_flags |= TOF_SIGNATURE;
 			to->to_signature = cp + 2;
 			break;
-#endif
 		case TCPOPT_SACK_PERMITTED:
 			if (optlen != TCPOLEN_SACK_PERMITTED)
 				continue;
@@ -3520,7 +3510,7 @@ tcp_xmit_timer(struct tcpcb *tp, int rtt)
 
 	TCPSTAT_INC(tcps_rttupdated);
 	tp->t_rttupdated++;
-	if (tp->t_srtt != 0) {
+	if ((tp->t_srtt != 0) && (tp->t_rxtshift <= TCP_RTT_INVALIDATE)) {
 		/*
 		 * srtt is stored as fixed point with 5 bits after the
 		 * binary point (i.e., scaled by 8).  The following magic

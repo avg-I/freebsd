@@ -96,13 +96,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/toecore.h>
 #endif
 
-#ifdef IPSEC
-#include <netipsec/ipsec.h>
-#ifdef INET6
-#include <netipsec/ipsec6.h>
-#endif
-#include <netipsec/key.h>
-#endif /*IPSEC*/
+#include <netipsec/ipsec_support.h>
 
 #include <machine/in_cksum.h>
 
@@ -266,6 +260,8 @@ syncache_init(void)
 			 &V_tcp_syncache.hashbase[i].sch_mtx, 0);
 		V_tcp_syncache.hashbase[i].sch_length = 0;
 		V_tcp_syncache.hashbase[i].sch_sc = &V_tcp_syncache;
+		V_tcp_syncache.hashbase[i].sch_last_overflow =
+		    -(SYNCOOKIE_LIFETIME + 1);
 	}
 
 	/* Create the syncache entry zone. */
@@ -341,6 +337,7 @@ syncache_insert(struct syncache *sc, struct syncache_head *sch)
 		KASSERT(!TAILQ_EMPTY(&sch->sch_bucket),
 			("sch->sch_length incorrect"));
 		sc2 = TAILQ_LAST(&sch->sch_bucket, sch_head);
+		sch->sch_last_overflow = time_uptime;
 		syncache_drop(sc2, sch);
 		TCPSTAT_INC(tcps_sc_bucketoverflow);
 	}
@@ -744,11 +741,6 @@ syncache_socket(struct syncache *sc, struct socket *lso, struct mbuf *m)
 		INP_HASH_WUNLOCK(&V_tcbinfo);
 		goto abort;
 	}
-#ifdef IPSEC
-	/* Copy old policy into new socket's. */
-	if (ipsec_copy_policy(sotoinpcb(lso)->inp_sp, inp->inp_sp))
-		printf("syncache_socket: could not copy policy\n");
-#endif
 #ifdef INET6
 	if (sc->sc_inc.inc_flags & INC_ISIPV6) {
 		struct inpcb *oinp = sotoinpcb(lso);
@@ -830,6 +822,11 @@ syncache_socket(struct syncache *sc, struct socket *lso, struct mbuf *m)
 		}
 	}
 #endif /* INET */
+#if defined(IPSEC) || defined(IPSEC_SUPPORT)
+	/* Copy old policy into new socket's. */
+	if (ipsec_copy_pcbpolicy(sotoinpcb(lso), inp) != 0)
+		printf("syncache_socket: could not copy policy\n");
+#endif
 	INP_HASH_WUNLOCK(&V_tcbinfo);
 	tp = intotcpcb(inp);
 	tcp_state_change(tp, TCPS_SYN_RECEIVED);
@@ -880,7 +877,7 @@ syncache_socket(struct syncache *sc, struct socket *lso, struct mbuf *m)
 			tp->ts_recent_age = tcp_ts_getticks();
 			tp->ts_offset = sc->sc_tsoff;
 		}
-#ifdef TCP_SIGNATURE
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
 		if (sc->sc_flags & SCF_SIGNATURE)
 			tp->t_flags |= TF_SIGNATURE;
 #endif
@@ -980,10 +977,13 @@ syncache_expand(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 		/*
 		 * There is no syncache entry, so see if this ACK is
 		 * a returning syncookie.  To do this, first:
-		 *  A. See if this socket has had a syncache entry dropped in
-		 *     the past.  We don't want to accept a bogus syncookie
-		 *     if we've never received a SYN.
-		 *  B. check that the syncookie is valid.  If it is, then
+		 *  A. Check if syncookies are used in case of syncache
+		 *     overflows
+		 *  B. See if this socket has had a syncache entry dropped in
+		 *     the recent past. We don't want to accept a bogus
+		 *     syncookie if we've never received a SYN or accept it
+		 *     twice.
+		 *  C. check that the syncookie is valid.  If it is, then
 		 *     cobble up a fake syncache entry, and return.
 		 */
 		if (!V_tcp_syncookies) {
@@ -991,6 +991,15 @@ syncache_expand(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 			if ((s = tcp_log_addrs(inc, th, NULL, NULL)))
 				log(LOG_DEBUG, "%s; %s: Spurious ACK, "
 				    "segment rejected (syncookies disabled)\n",
+				    s, __func__);
+			goto failed;
+		}
+		if (!V_tcp_syncookiesonly &&
+		    sch->sch_last_overflow < time_uptime - SYNCOOKIE_LIFETIME) {
+			SCH_UNLOCK(sch);
+			if ((s = tcp_log_addrs(inc, th, NULL, NULL)))
+				log(LOG_DEBUG, "%s; %s: Spurious ACK, "
+				    "segment rejected (no syncache entry)\n",
 				    s, __func__);
 			goto failed;
 		}
@@ -1004,7 +1013,57 @@ syncache_expand(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 				    "(probably spoofed)\n", s, __func__);
 			goto failed;
 		}
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+		/* If received ACK has MD5 signature, check it. */
+		if ((to->to_flags & TOF_SIGNATURE) != 0 &&
+		    (!TCPMD5_ENABLED() ||
+		    TCPMD5_INPUT(m, th, to->to_signature) != 0)) {
+			/* Drop the ACK. */
+			if ((s = tcp_log_addrs(inc, th, NULL, NULL))) {
+				log(LOG_DEBUG, "%s; %s: Segment rejected, "
+				    "MD5 signature doesn't match.\n",
+				    s, __func__);
+				free(s, M_TCPLOG);
+			}
+			TCPSTAT_INC(tcps_sig_err_sigopt);
+			return (-1); /* Do not send RST */
+		}
+#endif /* TCP_SIGNATURE */
 	} else {
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+		/*
+		 * If listening socket requested TCP digests, check that
+		 * received ACK has signature and it is correct.
+		 * If not, drop the ACK and leave sc entry in th cache,
+		 * because SYN was received with correct signature.
+		 */
+		if (sc->sc_flags & SCF_SIGNATURE) {
+			if ((to->to_flags & TOF_SIGNATURE) == 0) {
+				/* No signature */
+				TCPSTAT_INC(tcps_sig_err_nosigopt);
+				SCH_UNLOCK(sch);
+				if ((s = tcp_log_addrs(inc, th, NULL, NULL))) {
+					log(LOG_DEBUG, "%s; %s: Segment "
+					    "rejected, MD5 signature wasn't "
+					    "provided.\n", s, __func__);
+					free(s, M_TCPLOG);
+				}
+				return (-1); /* Do not send RST */
+			}
+			if (!TCPMD5_ENABLED() ||
+			    TCPMD5_INPUT(m, th, to->to_signature) != 0) {
+				/* Doesn't match or no SA */
+				SCH_UNLOCK(sch);
+				if ((s = tcp_log_addrs(inc, th, NULL, NULL))) {
+					log(LOG_DEBUG, "%s; %s: Segment "
+					    "rejected, MD5 signature doesn't "
+					    "match.\n", s, __func__);
+					free(s, M_TCPLOG);
+				}
+				return (-1); /* Do not send RST */
+			}
+		}
+#endif /* TCP_SIGNATURE */
 		/*
 		 * Pull out the entry to unlock the bucket row.
 		 * 
@@ -1274,6 +1333,22 @@ syncache_add(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 		ipopts = NULL;
 #endif
 
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+	/*
+	 * If listening socket requested TCP digests, check that received
+	 * SYN has signature and it is correct. If signature doesn't match
+	 * or TCP_SIGNATURE support isn't enabled, drop the packet.
+	 */
+	if (ltflags & TF_SIGNATURE) {
+		if ((to->to_flags & TOF_SIGNATURE) == 0) {
+			TCPSTAT_INC(tcps_sig_err_nosigopt);
+			goto done;
+		}
+		if (!TCPMD5_ENABLED() ||
+		    TCPMD5_INPUT(m, th, to->to_signature) != 0)
+			goto done;
+	}
+#endif	/* TCP_SIGNATURE */
 	/*
 	 * See if we already have an entry for this connection.
 	 * If we do, resend the SYN,ACK, and reset the retransmit timer.
@@ -1351,8 +1426,10 @@ syncache_add(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 		 * entry and insert the new one.
 		 */
 		TCPSTAT_INC(tcps_sc_zonefail);
-		if ((sc = TAILQ_LAST(&sch->sch_bucket, sch_head)) != NULL)
+		if ((sc = TAILQ_LAST(&sch->sch_bucket, sch_head)) != NULL) {
+			sch->sch_last_overflow = time_uptime;
 			syncache_drop(sc, sch);
+		}
 		sc = uma_zalloc(V_tcp_syncache.zone, M_NOWAIT | M_ZERO);
 		if (sc == NULL) {
 			if (V_tcp_syncookies) {
@@ -1449,15 +1526,15 @@ skip_alloc:
 			sc->sc_flags |= SCF_WINSCALE;
 		}
 	}
-#ifdef TCP_SIGNATURE
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
 	/*
-	 * If listening socket requested TCP digests, OR received SYN
-	 * contains the option, flag this in the syncache so that
-	 * syncache_respond() will do the right thing with the SYN+ACK.
+	 * If listening socket requested TCP digests, flag this in the
+	 * syncache so that syncache_respond() will do the right thing
+	 * with the SYN+ACK.
 	 */
-	if (to->to_flags & TOF_SIGNATURE || ltflags & TF_SIGNATURE)
+	if (ltflags & TF_SIGNATURE)
 		sc->sc_flags |= SCF_SIGNATURE;
-#endif
+#endif	/* TCP_SIGNATURE */
 	if (to->to_flags & TOF_SACKPERM)
 		sc->sc_flags |= SCF_SACK;
 	if (to->to_flags & TOF_MSS)
@@ -1548,10 +1625,6 @@ syncache_respond(struct syncache *sc, struct syncache_head *sch, int locked,
 #ifdef INET6
 	struct ip6_hdr *ip6 = NULL;
 #endif
-#ifdef TCP_SIGNATURE
-	struct secasvar *sav;
-#endif
-
 	hlen =
 #ifdef INET6
 	       (sc->sc_inc.inc_flags & INC_ISIPV6) ? sizeof(struct ip6_hdr) :
@@ -1660,32 +1733,10 @@ syncache_respond(struct syncache *sc, struct syncache_head *sch, int locked,
 		}
 		if (sc->sc_flags & SCF_SACK)
 			to.to_flags |= TOF_SACKPERM;
-#ifdef TCP_SIGNATURE
-		sav = NULL;
-		if (sc->sc_flags & SCF_SIGNATURE) {
-			sav = tcp_get_sav(m, IPSEC_DIR_OUTBOUND);
-			if (sav != NULL)
-				to.to_flags |= TOF_SIGNATURE;
-			else {
-
-				/*
-				 * We've got SCF_SIGNATURE flag
-				 * inherited from listening socket,
-				 * but no SADB key for given source
-				 * address. Assume signature is not
-				 * required and remove signature flag
-				 * instead of silently dropping
-				 * connection.
-				 */
-				if (locked == 0)
-					SCH_LOCK(sch);
-				sc->sc_flags &= ~SCF_SIGNATURE;
-				if (locked == 0)
-					SCH_UNLOCK(sch);
-			}
-		}
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+		if (sc->sc_flags & SCF_SIGNATURE)
+			to.to_flags |= TOF_SIGNATURE;
 #endif
-
 #ifdef TCP_RFC7413
 		if (sc->sc_tfo_cookie) {
 			to.to_flags |= TOF_FASTOPEN;
@@ -1701,18 +1752,25 @@ syncache_respond(struct syncache *sc, struct syncache_head *sch, int locked,
 		th->th_off = (sizeof(struct tcphdr) + optlen) >> 2;
 		m->m_len += optlen;
 		m->m_pkthdr.len += optlen;
-
-#ifdef TCP_SIGNATURE
-		if (sc->sc_flags & SCF_SIGNATURE)
-			tcp_signature_do_compute(m, 0, optlen,
-			    to.to_signature, sav);
-#endif
 #ifdef INET6
 		if (sc->sc_inc.inc_flags & INC_ISIPV6)
 			ip6->ip6_plen = htons(ntohs(ip6->ip6_plen) + optlen);
 		else
 #endif
 			ip->ip_len = htons(ntohs(ip->ip_len) + optlen);
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+		if (sc->sc_flags & SCF_SIGNATURE) {
+			KASSERT(to.to_flags & TOF_SIGNATURE,
+			    ("tcp_addoptions() didn't set tcp_signature"));
+
+			/* NOTE: to.to_signature is inside of mbuf */
+			if (!TCPMD5_ENABLED() ||
+			    TCPMD5_OUTPUT(m, th, to.to_signature) != 0) {
+				m_freem(m);
+				return (EACCES);
+			}
+		}
+#endif
 	} else
 		optlen = 0;
 
@@ -2176,13 +2234,13 @@ syncache_pcblist(struct sysctl_req *req, int max_pcbs, int *pcbs_exported)
 				xt.xt_inp.inp_vflag = INP_IPV6;
 			else
 				xt.xt_inp.inp_vflag = INP_IPV4;
-			bcopy(&sc->sc_inc, &xt.xt_inp.inp_inc, sizeof (struct in_conninfo));
-			xt.xt_tp.t_inpcb = &xt.xt_inp;
-			xt.xt_tp.t_state = TCPS_SYN_RECEIVED;
-			xt.xt_socket.xso_protocol = IPPROTO_TCP;
-			xt.xt_socket.xso_len = sizeof (struct xsocket);
-			xt.xt_socket.so_type = SOCK_STREAM;
-			xt.xt_socket.so_state = SS_ISCONNECTING;
+			bcopy(&sc->sc_inc, &xt.xt_inp.inp_inc,
+			    sizeof (struct in_conninfo));
+			xt.t_state = TCPS_SYN_RECEIVED;
+			xt.xt_inp.xi_socket.xso_protocol = IPPROTO_TCP;
+			xt.xt_inp.xi_socket.xso_len = sizeof (struct xsocket);
+			xt.xt_inp.xi_socket.so_type = SOCK_STREAM;
+			xt.xt_inp.xi_socket.so_state = SS_ISCONNECTING;
 			error = SYSCTL_OUT(req, &xt, sizeof xt);
 			if (error) {
 				SCH_UNLOCK(sch);

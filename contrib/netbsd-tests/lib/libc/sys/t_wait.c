@@ -1,4 +1,4 @@
-/* $NetBSD: t_wait.c,v 1.7 2016/11/06 15:04:14 kamil Exp $ */
+/* $NetBSD: t_wait.c,v 1.8 2017/01/13 19:28:55 christos Exp $ */
 
 /*-
  * Copyright (c) 2016 The NetBSD Foundation, Inc.
@@ -29,24 +29,25 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: t_wait.c,v 1.7 2016/11/06 15:04:14 kamil Exp $");
+__RCSID("$NetBSD: t_wait.c,v 1.8 2017/01/13 19:28:55 christos Exp $");
 
+#ifdef __FreeBSD__
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#endif
 #include <sys/wait.h>
 #include <sys/resource.h>
 
-#include <stdio.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <pwd.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include <atf-c.h>
-
-#ifdef __FreeBSD__
-#define	wrusage	__wrusage
-#endif
 
 ATF_TC(wait6_invalid);
 ATF_TC_HEAD(wait6_invalid, tc)
@@ -149,6 +150,14 @@ ATF_TC_BODY(wait6_coredumped, tc)
 	int st;
 	pid_t pid;
 	static const struct rlimit rl = { RLIM_INFINITY, RLIM_INFINITY };
+
+#ifdef __FreeBSD__
+	int coredump_enabled;
+	size_t ce_len = sizeof(coredump_enabled);
+	if (sysctlbyname("kern.coredump", &coredump_enabled, &ce_len, NULL,
+	    0) == 0 && !coredump_enabled)
+		atf_tc_skip("Coredumps disabled");
+#endif
 
 	switch (pid = fork()) {
 	case 0:

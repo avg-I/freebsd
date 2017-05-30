@@ -10,7 +10,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -281,6 +281,7 @@ struct ifnet {
 	struct	ifmultihead if_multiaddrs; /* multicast addresses configured */
 	int	if_amcount;		/* number of all-multicast requests */
 	struct	ifaddr	*if_addr;	/* pointer to link-level address */
+	void	*if_hw_addr;		/* hardware link-level address */
 	const u_int8_t *if_broadcastaddr; /* linklevel broadcast bytestring */
 	struct	rwlock if_afdata_lock;
 	void	*if_afdata[AF_MAX];
@@ -650,6 +651,7 @@ int if_gethwassist(if_t ifp);
 int if_setsoftc(if_t ifp, void *softc);
 void *if_getsoftc(if_t ifp);
 int if_setflags(if_t ifp, int flags);
+int if_gethwaddr(if_t ifp, struct ifreq *);
 int if_setmtu(if_t ifp, int mtu);
 int if_getmtu(if_t ifp);
 int if_getmtu_family(if_t ifp, int family);
@@ -658,6 +660,12 @@ int if_getflags(if_t ifp);
 int if_sendq_empty(if_t ifp);
 int if_setsendqready(if_t ifp);
 int if_setsendqlen(if_t ifp, int tx_desc_count);
+int if_sethwtsomax(if_t ifp, u_int if_hw_tsomax);
+int if_sethwtsomaxsegcount(if_t ifp, u_int if_hw_tsomaxsegcount);
+int if_sethwtsomaxsegsize(if_t ifp, u_int if_hw_tsomaxsegsize);
+u_int if_gethwtsomax(if_t ifp);
+u_int if_gethwtsomaxsegcount(if_t ifp);
+u_int if_gethwtsomaxsegsize(if_t ifp);
 int if_input(if_t ifp, struct mbuf* sendmp);
 int if_sendq_prepend(if_t ifp, struct mbuf *m);
 struct mbuf *if_dequeue(if_t ifp);

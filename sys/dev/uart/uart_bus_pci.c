@@ -127,6 +127,7 @@ static const struct pci_id pci_ns8250_ids[] = {
 	24 * DEFAULT_RCLK, 2 },
 { 0x8086, 0x0f0c, 0xffff, 0, "Intel ValleyView LPIO1 HSUART#2", 0x10,
 	24 * DEFAULT_RCLK, 2 },
+{ 0x8086, 0x108f, 0xffff, 0, "Intel AMT - SOL", 0x10 },
 { 0x8086, 0x1c3d, 0xffff, 0, "Intel AMT - KT Controller", 0x10 },
 { 0x8086, 0x1d3d, 0xffff, 0, "Intel C600/X79 Series Chipset KT Controller", 0x10 },
 { 0x8086, 0x1e3d, 0xffff, 0, "Intel Panther Point KT Controller", 0x10 },
@@ -201,7 +202,7 @@ uart_pci_probe(device_t dev)
 	return (ENXIO);
 
  match:
-	result = uart_bus_probe(dev, id->regshft, id->rclk, id->rid, 0);
+	result = uart_bus_probe(dev, id->regshft, 0, id->rclk, id->rid, 0);
 	/* Bail out on error. */
 	if (result > 0)
 		return (result);

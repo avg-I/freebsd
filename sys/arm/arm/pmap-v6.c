@@ -140,7 +140,6 @@ __FBSDID("$FreeBSD$");
 #ifdef SMP
 #include <machine/smp.h>
 #endif
-
 #ifndef PMAP_SHPGPERPROC
 #define PMAP_SHPGPERPROC 200
 #endif
@@ -431,7 +430,9 @@ encode_ttb_flags(int idx)
 		reg |= (inner & 0x1) << 6;
 	reg |= (inner & 0x2) >> 1;
 #ifdef SMP
-	reg |= 1 << 1;
+	ARM_SMP_UP(
+		reg |= 1 << 1,
+	);
 #endif
 	return reg;
 }
@@ -485,14 +486,51 @@ pmap_set_tex(void)
 
 	/* Add shareable bits for normal memory in SMP case. */
 #ifdef SMP
-	if (ARM_USE_MP_EXTENSIONS)
-		prrr |= PRRR_NS1;
+	ARM_SMP_UP(
+		prrr |= PRRR_NS1,
+	);
 #endif
 	cp15_prrr_set(prrr);
 	cp15_nmrr_set(nmrr);
 
 	/* Caches are disabled, so full TLB flush should be enough. */
 	tlb_flush_all_local();
+}
+
+/*
+ * Remap one vm_meattr class to another one. This can be useful as
+ * workaround for SOC errata, e.g. if devices must be accessed using
+ * SO memory class.
+ *
+ * !!! Please note that this function is absolutely last resort thing.
+ * It should not be used under normal circumstances. !!!
+ *
+ * Usage rules:
+ * - it shall be called after pmap_bootstrap_prepare() and before
+ *   cpu_mp_start() (thus only on boot CPU). In practice, it's expected
+ *   to be called from platform_attach() or platform_late_init().
+ *
+ * - if remapping doesn't change caching mode, or until uncached class
+ *   is remapped to any kind of cached one, then no other restriction exists.
+ *
+ * - if pmap_remap_vm_attr() changes caching mode, but both (original and
+ *   remapped) remain cached, then caller is resposible for calling
+ *   of dcache_wbinv_poc_all().
+ *
+ * - remapping of any kind of cached class to uncached is not permitted.
+ */
+void
+pmap_remap_vm_attr(vm_memattr_t old_attr, vm_memattr_t new_attr)
+{
+	int old_idx, new_idx;
+	
+	/* Map VM memattrs to indexes to tex_class table. */
+	old_idx = pte2_attr_tab[(int)old_attr];
+	new_idx = pte2_attr_tab[(int)new_attr];
+	
+	/* Replace TEX attribute and apply it. */
+	tex_class[old_idx] = tex_class[new_idx];
+	pmap_set_tex();
 }
 
 /*
@@ -3320,7 +3358,7 @@ pmap_change_pte1(pmap_t pmap, pt1_entry_t *pte1p, vm_offset_t va,
 		act.va = va;
 		act.npte1 = npte1;
 		act.update = PCPU_GET(cpuid);
-		smp_rendezvous_cpus(all_cpus, smp_no_rendevous_barrier,
+		smp_rendezvous_cpus(all_cpus, smp_no_rendezvous_barrier,
 		    pmap_update_pte1_action, NULL, &act);
 		sched_unpin();
 	} else {
@@ -4797,12 +4835,11 @@ pmap_protect_pte1(pmap_t pmap, pt1_entry_t *pte1p, vm_offset_t sva,
 	    ("%s: sva is not 1mpage aligned", __func__));
 
 	opte1 = npte1 = pte1_load(pte1p);
-	if (pte1_is_managed(opte1)) {
+	if (pte1_is_managed(opte1) && pte1_is_dirty(opte1)) {
 		eva = sva + PTE1_SIZE;
 		for (va = sva, m = PHYS_TO_VM_PAGE(pte1_pa(opte1));
 		    va < eva; va += PAGE_SIZE, m++)
-			if (pte1_is_dirty(opte1))
-				vm_page_dirty(m);
+			vm_page_dirty(m);
 	}
 	if ((prot & VM_PROT_WRITE) == 0)
 		npte1 |= PTE1_RO | PTE1_NM;

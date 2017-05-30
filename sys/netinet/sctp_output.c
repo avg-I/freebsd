@@ -7730,9 +7730,9 @@ sctp_fill_outqueue(struct sctp_tcb *stcb,
 	/* must make even word boundary */
 	space_left &= 0xfffffffc;
 	strq = stcb->asoc.ss_functions.sctp_ss_select_stream(stcb, net, asoc);
+	giveup = 0;
+	bail = 0;
 	while ((space_left > 0) && (strq != NULL)) {
-		giveup = 0;
-		bail = 0;
 		moved = sctp_move_to_outqueue(stcb, strq, space_left, frag_point,
 		    &giveup, eeor_mode, &bail, so_locked);
 		stcb->asoc.ss_functions.sctp_ss_scheduled(stcb, net, asoc, strq, moved);
@@ -11147,7 +11147,7 @@ sctp_send_resp_msg(struct sockaddr *src, struct sockaddr *dst,
 		ip->ip_v = IPVERSION;
 		ip->ip_hl = (sizeof(struct ip) >> 2);
 		ip->ip_tos = 0;
-		ip->ip_off = 0;
+		ip->ip_off = htons(IP_DF);
 		ip_fillid(ip);
 		ip->ip_ttl = MODULE_GLOBAL(ip_defttl);
 		if (port) {
@@ -12595,7 +12595,7 @@ sctp_lower_sosend(struct socket *so,
 	    (void *)addr,
 	    sndlen);
 	if ((inp->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) &&
-	    (inp->sctp_socket->so_qlimit)) {
+	    SCTP_IS_LISTENING(inp)) {
 		/* The listener can NOT send */
 		SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP_OUTPUT, ENOTCONN);
 		error = ENOTCONN;

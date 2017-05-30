@@ -34,7 +34,7 @@ cloudabi64_vdso_blob.o		optional	compat_cloudabi64	\
 #
 linux32_genassym.o		optional	compat_linux32		\
 	dependency 	"$S/amd64/linux32/linux32_genassym.c"		\
-	compile-with	"${CC} ${CFLAGS:N-fno-common} -c ${.IMPSRC}"	\
+	compile-with	"${CC} ${CFLAGS:N-flto:N-fno-common} -c ${.IMPSRC}" \
 	no-obj no-implicit-rule						\
 	clean		"linux32_genassym.o"
 #
@@ -58,7 +58,7 @@ linux32_vdso.so		optional	compat_linux32			\
 #
 ia32_genassym.o			standard				\
 	dependency 	"$S/compat/ia32/ia32_genassym.c"		\
-	compile-with	"${CC} ${CFLAGS:N-fno-common} -c ${.IMPSRC}"	\
+	compile-with	"${CC} ${CFLAGS:N-flto:N-fno-common} -c ${.IMPSRC}" \
 	no-obj no-implicit-rule						\
 	clean		"ia32_genassym.o"
 #
@@ -125,7 +125,6 @@ acpi_wakedata.h			optional	acpi			\
 	no-obj no-implicit-rule	before-depend				\
 	clean		"acpi_wakedata.h"
 #
-amd64/amd64/amd64_mem.c		optional	mem
 #amd64/amd64/apic_vector.S	standard
 amd64/amd64/atomic.c		standard
 amd64/amd64/bios.c		standard
@@ -180,13 +179,19 @@ aesni_wrap.o			optional aesni				\
 	compile-with	"${CC} -c ${CFLAGS:C/^-O2$/-O3/:N-nostdinc} ${WERROR} ${NO_WCAST_QUAL} ${PROF} -mmmx -msse -msse4 -maes ${.IMPSRC}" \
 	no-implicit-rule						\
 	clean		"aesni_wrap.o"
-crypto/blowfish/bf_enc.c	optional	crypto | ipsec
-crypto/des/des_enc.c		optional	crypto | ipsec | netsmb
+crypto/blowfish/bf_enc.c	optional	crypto | ipsec | ipsec_support
+crypto/des/des_enc.c		optional	crypto | ipsec | \
+	ipsec_support | netsmb
 crypto/via/padlock.c		optional	padlock
 crypto/via/padlock_cipher.c	optional	padlock
 crypto/via/padlock_hash.c	optional	padlock
 dev/acpica/acpi_if.m		standard
 dev/acpica/acpi_hpet.c		optional acpi
+dev/acpica/acpi_pci.c		optional acpi pci
+dev/acpica/acpi_pci_link.c	optional acpi pci
+dev/acpica/acpi_pcib.c		optional acpi pci
+dev/acpica/acpi_pcib_acpi.c	optional acpi pci
+dev/acpica/acpi_pcib_pci.c	optional acpi pci
 dev/acpica/acpi_timer.c		optional	acpi
 dev/acpi_support/acpi_wmi_if.m	standard
 dev/agp/agp_amd64.c		optional	agp
@@ -251,6 +256,10 @@ dev/ixl/ixl_pf_qmgr.c		optional	ixl pci \
 	compile-with "${NORMAL_C} -I$S/dev/ixl"
 dev/ixl/ixl_pf_iov.c		optional	ixl pci \
 	compile-with "${NORMAL_C} -I$S/dev/ixl"
+dev/ixl/ixl_pf_i2c.c		optional	ixl pci \
+	compile-with "${NORMAL_C} -I$S/dev/ixl"
+dev/ixl/ixl_iw.c		optional	ixl pci \
+	compile-with "${NORMAL_C} -I$S/dev/ixl"
 dev/ixl/if_ixlv.c		optional	ixlv pci \
 	compile-with "${NORMAL_C} -I$S/dev/ixl"
 dev/ixl/ixlvc.c			optional	ixlv pci \
@@ -295,6 +304,8 @@ dev/hwpmc/hwpmc_uncore.c	optional	hwpmc
 dev/hwpmc/hwpmc_piv.c		optional	hwpmc
 dev/hwpmc/hwpmc_tsc.c		optional	hwpmc
 dev/hwpmc/hwpmc_x86.c		optional	hwpmc
+dev/hyperv/input/hv_kbd.c				optional	hyperv
+dev/hyperv/input/hv_kbdc.c				optional	hyperv
 dev/hyperv/pcib/vmbus_pcib.c				optional	hyperv pci
 dev/hyperv/netvsc/hn_nvs.c				optional	hyperv
 dev/hyperv/netvsc/hn_rndis.c				optional	hyperv
@@ -313,9 +324,11 @@ dev/hyperv/vmbus/vmbus_br.c				optional	hyperv
 dev/hyperv/vmbus/vmbus_chan.c				optional	hyperv
 dev/hyperv/vmbus/vmbus_et.c				optional	hyperv
 dev/hyperv/vmbus/vmbus_if.m				optional	hyperv
+dev/hyperv/vmbus/vmbus_res.c				optional	hyperv
 dev/hyperv/vmbus/vmbus_xact.c				optional	hyperv
 dev/hyperv/vmbus/amd64/hyperv_machdep.c			optional	hyperv
 dev/hyperv/vmbus/amd64/vmbus_vector.S			optional	hyperv
+dev/nctgpio/nctgpio.c		optional	nctgpio
 dev/nfe/if_nfe.c		optional	nfe pci
 dev/ntb/if_ntb/if_ntb.c		optional	if_ntb
 dev/ntb/ntb_transport.c		optional	if_ntb
@@ -355,6 +368,34 @@ dev/qlxgbe/ql_isr.c		optional	qlxgbe pci
 dev/qlxgbe/ql_misc.c		optional	qlxgbe pci
 dev/qlxgbe/ql_os.c		optional	qlxgbe pci
 dev/qlxgbe/ql_reset.c		optional	qlxgbe pci
+dev/qlnx/qlnxe/ecore_cxt.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_dbg_fw_funcs.c optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_dcbx.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_dev.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_hw.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_init_fw_funcs.c optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_init_ops.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_int.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_l2.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_mcp.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_sp_commands.c optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/ecore_spq.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/qlnx_ioctl.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
+dev/qlnx/qlnxe/qlnx_os.c	optional	qlnxe pci \
+	compile-with "${LINUXKPI_C}"
 dev/sfxge/common/ef10_ev.c	optional	sfxge pci
 dev/sfxge/common/ef10_filter.c	optional	sfxge pci
 dev/sfxge/common/ef10_intr.c	optional	sfxge pci
@@ -537,6 +578,9 @@ isa/syscons_isa.c		optional	sc
 isa/vga_isa.c			optional	vga
 kern/kern_clocksource.c		standard
 kern/link_elf_obj.c		standard
+libkern/x86/crc32_sse42.c	standard
+libkern/memmove.c		standard
+libkern/memset.c		standard
 #
 # IA32 binary support
 #
@@ -594,14 +638,6 @@ compat/ndis/subr_pe.c		optional	ndisapi pci
 compat/ndis/subr_usbd.c		optional	ndisapi pci
 compat/ndis/winx64_wrap.S	optional	ndisapi pci
 #
-crc32_sse42.o			standard				\
-	dependency	"$S/libkern/x86/crc32_sse42.c"			\
-	compile-with	"${CC} -c ${CFLAGS:N-nostdinc} ${WERROR} ${PROF} -msse4 ${.IMPSRC}" \
-	no-implicit-rule						\
-	clean		"crc32_sse42.o"
-libkern/memmove.c		standard
-libkern/memset.c		standard
-#
 # x86 real mode BIOS emulator, required by dpms/pci/vesa
 #
 compat/x86bios/x86bios.c	optional x86bios | dpms | pci | vesa
@@ -658,6 +694,7 @@ x86/x86/io_apic.c		standard
 x86/x86/legacy.c		standard
 x86/x86/local_apic.c		standard
 x86/x86/mca.c			standard
+x86/x86/x86_mem.c		optional	mem
 x86/x86/mptable.c		optional	mptable
 x86/x86/mptable_pci.c		optional	mptable pci
 x86/x86/mp_x86.c		optional	smp

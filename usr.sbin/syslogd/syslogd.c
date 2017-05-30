@@ -10,7 +10,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -68,6 +68,8 @@ __FBSDID("$FreeBSD$");
  * Priority comparison code by Harlan Stenn.
  */
 
+/* Maximum number of characters in time of last occurrence */
+#define	MAXDATELEN	16
 #define	MAXLINE		1024		/* maximum line length */
 #define	MAXSVLINE	MAXLINE		/* maximum saved line length */
 #define	DEFUPRI		(LOG_USER|LOG_NOTICE)
@@ -79,17 +81,17 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <sys/socket.h>
 #include <sys/queue.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/syslimits.h>
+#include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/un.h>
-#include <sys/time.h>
-#include <sys/resource.h>
-#include <sys/syslimits.h>
+#include <sys/wait.h>
 
-#if defined(INET) || defined(INET6) 
+#if defined(INET) || defined(INET6)
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #endif
@@ -212,7 +214,7 @@ struct filed {
 #define	fu_pipe_pname	f_un.f_pipe.f_pname
 #define	fu_pipe_pid	f_un.f_pipe.f_pid
 	char	f_prevline[MAXSVLINE];		/* last message logged */
-	char	f_lasttime[16];			/* time of last occurrence */
+	char	f_lasttime[MAXDATELEN];		/* time of last occurrence */
 	char	f_prevhost[MAXHOSTNAMELEN];	/* host from which recd. */
 	int	f_prevpri;			/* pri of f_prevline */
 	int	f_prevlen;			/* length of f_prevline */
@@ -287,7 +289,7 @@ static int repeatinterval[] = { 30, 120, 600 };	/* # of secs before flush */
 #define F_WALL		6		/* everyone logged on */
 #define F_PIPE		7		/* pipe to program */
 
-static const char *TypeNames[8] = {
+static const char *TypeNames[] = {
 	"UNUSED",	"FILE",		"TTY",		"CONSOLE",
 	"FORW",		"USERS",	"WALL",		"PIPE"
 };
@@ -475,7 +477,15 @@ main(int argc, char *argv[])
 			break;
 		case 'b':
 			bflag = 1;
-			if ((p = strchr(optarg, ':')) == NULL) {
+			p = strchr(optarg, ']');
+			if (p != NULL)
+				p = strchr(p + 1, ':');
+			else {
+				p = strchr(optarg, ':');
+				if (p != NULL && strchr(p + 1, ':') != NULL)
+					p = NULL; /* backward compatibility */
+			}
+			if (p == NULL) {
 				/* A hostname or filename only. */
 				addpeer(&(struct peer){
 					.pe_name = optarg,
@@ -683,14 +693,16 @@ main(int argc, char *argv[])
 			reapchild(WantReapchild);
 		if (MarkSet)
 			markit();
-		if (WantDie)
+		if (WantDie) {
+			free(fdsr);
 			die(WantDie);
+		}
 
 		bzero(fdsr, howmany(fdsrmax+1, NFDBITS) *
 		    sizeof(fd_mask));
 
 		STAILQ_FOREACH(sl, &shead, next) {
-			if (sl->sl_socket != -1)
+			if (sl->sl_socket != -1 && sl->sl_recv != NULL)
 				FD_SET(sl->sl_socket, fdsr);
 		}
 		i = select(fdsrmax + 1, fdsr, NULL, NULL,
@@ -1034,7 +1046,7 @@ logmsg(int pri, const char *msg, const char *from, int flags)
 	 * Check to see if msg looks non-standard.
 	 */
 	msglen = strlen(msg);
-	if (msglen < 16 || msg[3] != ' ' || msg[6] != ' ' ||
+	if (msglen < MAXDATELEN || msg[3] != ' ' || msg[6] != ' ' ||
 	    msg[9] != ':' || msg[12] != ':' || msg[15] != ' ')
 		flags |= ADDDATE;
 
@@ -1043,8 +1055,8 @@ logmsg(int pri, const char *msg, const char *from, int flags)
 		timestamp = ctime(&now) + 4;
 	} else {
 		timestamp = msg;
-		msg += 16;
-		msglen -= 16;
+		msg += MAXDATELEN;
+		msglen -= MAXDATELEN;
 	}
 
 	/* skip leading blanks */
@@ -2113,6 +2125,7 @@ cfline(const char *line, const char *prog, const char *host)
 				(void)snprintf(ebuf, sizeof ebuf,
 				    "unknown priority name \"%s\"", buf);
 				logerror(ebuf);
+				free(f);
 				return (NULL);
 			}
 		}
@@ -2143,6 +2156,7 @@ cfline(const char *line, const char *prog, const char *host)
 					    "unknown facility name \"%s\"",
 					    buf);
 					logerror(ebuf);
+					free(f);
 					return (NULL);
 				}
 				f->f_pmask[i >> 3] = pri;
@@ -2348,7 +2362,7 @@ markit(void)
 
 /*
  * fork off and become a daemon, but wait for the child to come online
- * before returing to the parent, or we get disk thrashing at boot etc.
+ * before returning to the parent, or we get disk thrashing at boot etc.
  * Set a timer so we don't hang forever if it wedges.
  */
 static int
@@ -2436,7 +2450,7 @@ allowaddr(char *s)
 	struct allowedpeer *ap;
 	struct servent *se;
 	int masklen = -1;
-	struct addrinfo hints, *res;
+	struct addrinfo hints, *res = NULL;
 #ifdef INET
 	in_addr_t *addrp, *maskp;
 #endif
@@ -2463,8 +2477,9 @@ allowaddr(char *s)
 			ap->port = ntohs(se->s_port);
 		} else {
 			ap->port = strtol(cp1, &cp2, 0);
+			/* port not numeric */
 			if (*cp2 != '\0')
-				return (-1); /* port not numeric */
+				goto err;
 		}
 	} else {
 		if ((se = getservbyname("syslog", "udp")))
@@ -2478,7 +2493,7 @@ allowaddr(char *s)
 	    strspn(cp1 + 1, "0123456789") == strlen(cp1 + 1)) {
 		*cp1 = '\0';
 		if ((masklen = atoi(cp1 + 1)) < 0)
-			return (-1);
+			goto err;
 	}
 #ifdef INET6
 	if (*s == '[') {
@@ -2524,8 +2539,7 @@ allowaddr(char *s)
 				/* convert masklen to netmask */
 				*maskp = htonl(~((1 << (32 - masklen)) - 1));
 			} else {
-				freeaddrinfo(res);
-				return (-1);
+				goto err;
 			}
 			/* Lose any host bits in the network number. */
 			*addrp &= *maskp;
@@ -2533,10 +2547,9 @@ allowaddr(char *s)
 #endif
 #ifdef INET6
 		case AF_INET6:
-			if (masklen > 128) {
-				freeaddrinfo(res);
-				return (-1);
-			}
+			if (masklen > 128)
+				goto err;
+
 			if (masklen < 0)
 				masklen = 128;
 			mask6p = (uint32_t *)&sstosin6(&ap->a_mask)->sin6_addr.s6_addr32[0];
@@ -2557,8 +2570,7 @@ allowaddr(char *s)
 			break;
 #endif
 		default:
-			freeaddrinfo(res);
-			return (-1);
+			goto err;
 		}
 		freeaddrinfo(res);
 	} else {
@@ -2594,7 +2606,13 @@ allowaddr(char *s)
 		printf("port = %d\n", ap->port);
 	}
 #endif
+
 	return (0);
+err:
+	if (res != NULL)
+		freeaddrinfo(res);
+	free(ap);
+	return (-1);
 }
 
 /*
@@ -2859,6 +2877,7 @@ socksetup(struct peer *pe)
 	struct addrinfo hints, *res, *res0;
 	int error;
 	char *cp;
+	int (*sl_recv)(struct socklist *);
 	/*
 	 * We have to handle this case for backwards compatibility:
 	 * If there are two (or more) colons but no '[' and ']',
@@ -2891,13 +2910,23 @@ socksetup(struct peer *pe)
 		.ai_socktype = SOCK_DGRAM,
 		.ai_flags = AI_PASSIVE
 	};
-	dprintf("Try %s\n", pe->pe_name);
+	if (pe->pe_name != NULL)
+		dprintf("Trying peer: %s\n", pe->pe_name);
 	if (pe->pe_serv == NULL)
 		pe->pe_serv = "syslog";
 	error = getaddrinfo(pe->pe_name, pe->pe_serv, &hints, &res0);
 	if (error) {
-		logerror(gai_strerror(error));
+		char *msgbuf;
+
+		asprintf(&msgbuf, "getaddrinfo failed for %s%s: %s",
+		    pe->pe_name == NULL ? "" : pe->pe_name, pe->pe_serv,
+		    gai_strerror(error));
 		errno = 0;
+		if (msgbuf == NULL)
+			logerror(gai_strerror(error));
+		else
+			logerror(msgbuf);
+		free(msgbuf);
 		die(0);
 	}
 	for (res = res0; res != NULL; res = res->ai_next) {
@@ -2974,9 +3003,14 @@ socksetup(struct peer *pe)
 			continue;
 		}
 		dprintf("new socket fd is %d\n", s);
-		listen(s, 5);
-		dprintf("shutdown\n");
-		if (SecureMode || res->ai_family == AF_LOCAL) {
+		if (res->ai_socktype != SOCK_DGRAM) {
+			listen(s, 5);
+		}
+		sl_recv = socklist_recv_sock;
+#if defined(INET) || defined(INET6)
+		if (SecureMode && (res->ai_family == AF_INET ||
+		    res->ai_family == AF_INET6)) {
+			dprintf("shutdown\n");
 			/* Forbid communication in secure mode. */
 			if (shutdown(s, SHUT_RD) < 0 &&
 			    errno != ENOTCONN) {
@@ -2984,14 +3018,16 @@ socksetup(struct peer *pe)
 				if (!Debug)
 					die(0);
 			}
-			dprintf("listening on socket\n");
+			sl_recv = NULL;
 		} else
-			dprintf("sending on socket\n");
+#endif
+			dprintf("listening on socket\n");
+		dprintf("sending on socket\n");
 		addsock(res->ai_addr, res->ai_addrlen,
 		    &(struct socklist){
 			.sl_socket = s,
 			.sl_peer = pe,
-			.sl_recv = socklist_recv_sock
+			.sl_recv = sl_recv
 		});
 	}
 	freeaddrinfo(res0);
