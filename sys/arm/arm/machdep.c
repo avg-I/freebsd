@@ -103,6 +103,10 @@ __FBSDID("$FreeBSD$");
 #error FreeBSD/arm doesn't provide compatibility with releases prior to 10
 #endif
 
+#if __ARM_ARCH >= 6 && !defined(INTRNG)
+#error armv6 requires INTRNG
+#endif
+
 struct pcpu __pcpu[MAXCPU];
 struct pcpu *pcpup = &__pcpu[0];
 
@@ -142,7 +146,7 @@ static struct pv_addr kernelstack;
 #endif /* __ARM_ARCH >= 6 */
 #endif /* FDT */
 
-#ifdef MULTIDELAY
+#ifdef PLATFORM
 static delay_func *delay_impl;
 static void *delay_arg;
 #endif
@@ -297,6 +301,7 @@ cpu_idle_wakeup(int cpu)
 	return (0);
 }
 
+#ifdef NO_EVENTTIMERS
 /*
  * Most ARM platforms don't need to do anything special to init their clocks
  * (they get intialized during normal device attachment), and by not defining a
@@ -307,8 +312,14 @@ cpu_idle_wakeup(int cpu)
 void
 arm_generic_initclocks(void)
 {
+}
+__weak_reference(arm_generic_initclocks, cpu_initclocks);
 
-#ifndef NO_EVENTTIMERS
+#else
+void
+cpu_initclocks(void)
+{
+
 #ifdef SMP
 	if (PCPU_GET(cpuid) == 0)
 		cpu_initclocks_bsp();
@@ -317,11 +328,10 @@ arm_generic_initclocks(void)
 #else
 	cpu_initclocks_bsp();
 #endif
-#endif
 }
-__weak_reference(arm_generic_initclocks, cpu_initclocks);
+#endif
 
-#ifdef MULTIDELAY
+#ifdef PLATFORM
 void
 arm_set_delay(delay_func *impl, void *arg)
 {

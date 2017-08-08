@@ -54,7 +54,6 @@
 
 static void mlx4_en_sysctl_stat(struct mlx4_en_priv *priv);
 static void mlx4_en_sysctl_conf(struct mlx4_en_priv *priv);
-static int mlx4_en_unit;
 
 #ifdef CONFIG_NET_RX_BUSY_POLL
 /* must be called with local_bh_disable()d */
@@ -1378,8 +1377,6 @@ int mlx4_en_start_port(struct net_device *dev)
 	/* Schedule multicast task to populate multicast list */
 	queue_work(mdev->workqueue, &priv->rx_mode_task);
 
-	mlx4_set_stats_bitmap(mdev->dev, priv->stats_bitmap);
-
 	priv->port_up = true;
 
         /* Enable the queues. */
@@ -1731,13 +1728,12 @@ void mlx4_en_destroy_netdev(struct net_device *dev)
 		mutex_unlock(&mdev->state_lock);
 	}
 
-	if (priv->allocated)
-		mlx4_free_hwq_res(mdev->dev, &priv->res, MLX4_EN_PAGE_SIZE);
-
 	mutex_lock(&mdev->state_lock);
 	mlx4_en_stop_port(dev);
 	mutex_unlock(&mdev->state_lock);
 
+	if (priv->allocated)
+		mlx4_free_hwq_res(mdev->dev, &priv->res, MLX4_EN_PAGE_SIZE);
 
 	cancel_delayed_work(&priv->stats_task);
 	cancel_delayed_work(&priv->service_task);
@@ -2053,7 +2049,8 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
 		return -ENOMEM;
 	}
 	dev->if_softc = priv;
-	if_initname(dev, "mlxen", atomic_fetchadd_int(&mlx4_en_unit, 1));
+	if_initname(dev, "mlxen", (device_get_unit(
+	    mdev->pdev->dev.bsddev) * MLX4_MAX_PORTS) + port - 1);
 	dev->if_mtu = ETHERMTU;
 	dev->if_init = mlx4_en_open;
 	dev->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
@@ -2732,28 +2729,6 @@ static void mlx4_en_sysctl_stat(struct mlx4_en_priv *priv)
 	SYSCTL_ADD_ULONG(ctx, node_list, OID_AUTO, "rx_gt_1548_bytes_packets", CTLFLAG_RD,
 	    &priv->pkstats.rx_gt_1548_bytes_packets,
 	    "RX Greater Then 1548 bytes Packets");
-
-struct mlx4_en_pkt_stats {
-	unsigned long tx_packets;
-	unsigned long tx_bytes;
-	unsigned long tx_multicast_packets;
-	unsigned long tx_broadcast_packets;
-	unsigned long tx_errors;
-	unsigned long tx_dropped;
-	unsigned long tx_lt_64_bytes_packets;
-	unsigned long tx_127_bytes_packets;
-	unsigned long tx_255_bytes_packets;
-	unsigned long tx_511_bytes_packets;
-	unsigned long tx_1023_bytes_packets;
-	unsigned long tx_1518_bytes_packets;
-	unsigned long tx_1522_bytes_packets;
-	unsigned long tx_1548_bytes_packets;
-	unsigned long tx_gt_1548_bytes_packets;
-	unsigned long rx_prio[NUM_PRIORITIES][NUM_PRIORITY_STATS];
-	unsigned long tx_prio[NUM_PRIORITIES][NUM_PRIORITY_STATS];
-#define NUM_PKT_STATS		72
-};
-
 
 	SYSCTL_ADD_ULONG(ctx, node_list, OID_AUTO, "tx_packets", CTLFLAG_RD,
 	    &priv->pkstats.tx_packets, "TX packets");

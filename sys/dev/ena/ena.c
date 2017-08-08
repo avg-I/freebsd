@@ -141,6 +141,7 @@ static void	ena_free_irqs(struct ena_adapter*);
 static void	ena_disable_msix(struct ena_adapter *);
 static void	ena_unmask_all_io_irqs(struct ena_adapter *);
 static int	ena_rss_configure(struct ena_adapter *);
+static void	ena_update_hw_stats(void *, int);
 static int	ena_up_complete(struct ena_adapter *);
 static int	ena_up(struct ena_adapter *);
 static void	ena_down(struct ena_adapter *);
@@ -155,7 +156,9 @@ static void	ena_update_hwassist(struct ena_adapter *);
 static int	ena_setup_ifnet(device_t, struct ena_adapter *,
     struct ena_com_dev_get_features_ctx *);
 static void	ena_tx_csum(struct ena_com_tx_ctx *, struct mbuf *);
-static int	ena_xmit_mbuf(struct ena_ring *, struct mbuf *);
+static int	ena_check_and_collapse_mbuf(struct ena_ring *tx_ring,
+    struct mbuf **mbuf);
+static int	ena_xmit_mbuf(struct ena_ring *, struct mbuf **);
 static void	ena_start_xmit(struct ena_ring *);
 static int	ena_mq_start(if_t, struct mbuf *);
 static void	ena_deferred_mq_start(void *, int);
@@ -225,16 +228,16 @@ ena_dma_alloc(device_t dmadev, bus_size_t size,
 	if (dma_space_addr == 0)
 		dma_space_addr = BUS_SPACE_MAXADDR;
 	error = bus_dma_tag_create(bus_get_dma_tag(dmadev), /* parent */
-	    8, 0,	      /* alignment, bounds */
-	    dma_space_addr,   /* lowaddr */
-	    dma_space_addr,   /* highaddr */
-	    NULL, NULL,	      /* filter, filterarg */
-	    maxsize,	      /* maxsize */
-	    1,		      /* nsegments */
-	    maxsize,	      /* maxsegsize */
-	    BUS_DMA_ALLOCNOW, /* flags */
-	    NULL,	      /* lockfunc */
-	    NULL,	      /* lockarg */
+	    8, 0,	      /* alignment, bounds 		*/
+	    dma_space_addr,   /* lowaddr of exclusion window	*/
+	    BUS_SPACE_MAXADDR,/* highaddr of exclusion window	*/
+	    NULL, NULL,	      /* filter, filterarg 		*/
+	    maxsize,	      /* maxsize 			*/
+	    1,		      /* nsegments 			*/
+	    maxsize,	      /* maxsegsize 			*/
+	    BUS_DMA_ALLOCNOW, /* flags 				*/
+	    NULL,	      /* lockfunc 			*/
+	    NULL,	      /* lockarg 			*/
 	    &dma->tag);
 	if (error) {
 		device_printf(dmadev,
@@ -475,7 +478,6 @@ ena_init_io_rings(struct ena_adapter *adapter)
 		    device_get_nameunit(adapter->pdev), i);
 
 		mtx_init(&txr->ring_mtx, txr->mtx_name, NULL, MTX_DEF);
-		mtx_init(&rxr->ring_mtx, rxr->mtx_name, NULL, MTX_DEF);
 
 		que = &adapter->que[i];
 		que->adapter = adapter;
@@ -508,7 +510,6 @@ ena_free_io_ring_resources(struct ena_adapter *adapter, unsigned int qid)
 	    sizeof(rxr->rx_stats));
 
 	mtx_destroy(&txr->ring_mtx);
-	mtx_destroy(&rxr->ring_mtx);
 
 	drbr_free(txr->br, M_DEVBUF);
 
@@ -531,16 +532,16 @@ ena_setup_tx_dma_tag(struct ena_adapter *adapter)
 
 	/* Create DMA tag for Tx buffers */
 	ret = bus_dma_tag_create(bus_get_dma_tag(adapter->pdev),
-	    1, 0,				  /* alignment, bounds 	*/
-	    ENA_DMA_BIT_MASK(adapter->dma_width), /* lowaddr 		*/
-	    ENA_DMA_BIT_MASK(adapter->dma_width), /* highaddr 		*/
-	    NULL, NULL,				  /* filter, filterarg 	*/
-	    ENA_TSO_MAXSIZE,			  /* maxsize 		*/
-	    adapter->max_tx_sgl_size,		  /* nsegments 		*/
-	    ENA_TSO_MAXSIZE,			  /* maxsegsize 	*/
-	    0,					  /* flags 		*/
-	    NULL,				  /* lockfunc 		*/
-	    NULL,				  /* lockfuncarg 	*/
+	    1, 0,				  /* alignment, bounds 	     */
+	    ENA_DMA_BIT_MASK(adapter->dma_width), /* lowaddr of excl window  */
+	    BUS_SPACE_MAXADDR, 			  /* highaddr of excl window */
+	    NULL, NULL,				  /* filter, filterarg 	     */
+	    ENA_TSO_MAXSIZE,			  /* maxsize 		     */
+	    adapter->max_tx_sgl_size - 1,	  /* nsegments 		     */
+	    ENA_TSO_MAXSIZE,			  /* maxsegsize 	     */
+	    0,					  /* flags 		     */
+	    NULL,				  /* lockfunc 		     */
+	    NULL,				  /* lockfuncarg 	     */
 	    &adapter->tx_buf_tag);
 
 	if (ret != 0)
@@ -568,17 +569,17 @@ ena_setup_rx_dma_tag(struct ena_adapter *adapter)
 	int ret;
 
 	/* Create DMA tag for Rx buffers*/
-	ret = bus_dma_tag_create(bus_get_dma_tag(adapter->pdev), /* parent */
-	    1, 0,				  /* alignment, bounds 	*/
-	    ENA_DMA_BIT_MASK(adapter->dma_width), /* lowaddr 		*/
-	    ENA_DMA_BIT_MASK(adapter->dma_width), /* highaddr 		*/
-	    NULL, NULL,				  /* filter, filterarg 	*/
-	    MJUM16BYTES,			  /* maxsize 		*/
-	    1,					  /* nsegments 		*/
-	    MJUM16BYTES,			  /* maxsegsize 	*/
-	    0,					  /* flags 		*/
-	    NULL,				  /* lockfunc 		*/
-	    NULL,				  /* lockarg 		*/
+	ret = bus_dma_tag_create(bus_get_dma_tag(adapter->pdev), /* parent   */
+	    1, 0,				  /* alignment, bounds 	     */
+	    ENA_DMA_BIT_MASK(adapter->dma_width), /* lowaddr of excl window  */
+	    BUS_SPACE_MAXADDR, 			  /* highaddr of excl window */
+	    NULL, NULL,				  /* filter, filterarg 	     */
+	    MJUM16BYTES,			  /* maxsize 		     */
+	    1,					  /* nsegments 		     */
+	    MJUM16BYTES,			  /* maxsegsize 	     */
+	    0,					  /* flags 		     */
+	    NULL,				  /* lockfunc 		     */
+	    NULL,				  /* lockarg 		     */
 	    &adapter->rx_buf_tag);
 
 	if (ret != 0)
@@ -641,7 +642,9 @@ ena_setup_tx_resources(struct ena_adapter *adapter, int qid)
 	tx_ring->next_to_clean = 0;
 
 	/* Make sure that drbr is empty */
+	ENA_RING_MTX_LOCK(tx_ring);
 	drbr_flush(adapter->ifp, tx_ring->br);
+	ENA_RING_MTX_UNLOCK(tx_ring);
 
 	/* ... and create the buffer DMA maps */
 	for (i = 0; i < tx_ring->ring_size; i++) {
@@ -708,6 +711,7 @@ ena_free_tx_resources(struct ena_adapter *adapter, int qid)
 
 	taskqueue_free(tx_ring->enqueue_tq);
 
+	ENA_RING_MTX_LOCK(tx_ring);
 	/* Flush buffer ring, */
 	drbr_flush(adapter->ifp, tx_ring->br);
 
@@ -720,6 +724,7 @@ ena_free_tx_resources(struct ena_adapter *adapter, int qid)
 		bus_dmamap_destroy(adapter->tx_buf_tag,
 		    tx_ring->tx_buffer_info[i].map);
 	}
+	ENA_RING_MTX_UNLOCK(tx_ring);
 
 	/* And free allocated memory. */
 	ENA_MEM_FREE(adapter->ena_dev->dmadev, tx_ring->tx_buffer_info);
@@ -942,10 +947,8 @@ ena_alloc_rx_mbuf(struct ena_adapter *adapter,
 	if (rx_info->mbuf != NULL)
 		return (0);
 
-	ENA_RING_MTX_LOCK(rx_ring);
 	/* Get mbuf using UMA allocator */
 	rx_info->mbuf = m_getjcl(M_NOWAIT, MT_DATA, M_PKTHDR, MJUM16BYTES);
-	ENA_RING_MTX_UNLOCK(rx_ring);
 
 	if (!rx_info->mbuf) {
 		counter_u64_add(rx_ring->rx_stats.mbuf_alloc_fail, 1);
@@ -1029,7 +1032,7 @@ ena_refill_rx_bufs(struct ena_ring *rx_ring, uint32_t num)
 		    &rx_ring->rx_buffer_info[next_to_use];
 
 		rc = ena_alloc_rx_mbuf(adapter, rx_ring, rx_info);
-		if (rc < 0) {
+		if (rc != 0) {
 			device_printf(adapter->pdev,
 			    "failed to alloc buffer for rx queue\n");
 			break;
@@ -1120,6 +1123,7 @@ ena_free_tx_bufs(struct ena_adapter *adapter, unsigned int qid)
 {
 	struct ena_ring *tx_ring = &adapter->tx_ring[qid];
 
+	ENA_RING_MTX_LOCK(tx_ring);
 	for (int i = 0; i < tx_ring->ring_size; i++) {
 		struct ena_tx_buffer *tx_info = &tx_ring->tx_buffer_info[i];
 
@@ -1133,6 +1137,7 @@ ena_free_tx_bufs(struct ena_adapter *adapter, unsigned int qid)
 		m_free(tx_info->mbuf);
 		tx_info->mbuf = NULL;
 	}
+	ENA_RING_MTX_UNLOCK(tx_ring);
 
 	return;
 }
@@ -2058,6 +2063,25 @@ static int ena_rss_configure(struct ena_adapter *adapter)
 	return 0;
 }
 
+static void
+ena_update_hw_stats(void *arg, int pending)
+{
+	struct ena_adapter *adapter = arg;
+	int rc;
+
+	for (;;) {
+		if (!adapter->up)
+			return;
+
+		rc = ena_update_stats_counters(adapter);
+		if (rc)
+			ena_trace(ENA_WARNING,
+			    "Error updating stats counters, rc = %d", rc);
+
+		pause("ena update hw stats", hz);
+	}
+}
+
 static int
 ena_up_complete(struct ena_adapter *adapter)
 {
@@ -2071,7 +2095,6 @@ ena_up_complete(struct ena_adapter *adapter)
 
 	ena_change_mtu(adapter->ifp, adapter->ifp->if_mtu);
 	ena_refill_all_rx_bufs(adapter);
-	ena_unmask_all_io_irqs(adapter);
 
 	return (0);
 }
@@ -2141,7 +2164,11 @@ ena_up(struct ena_adapter *adapter)
 		callout_reset_sbt(&adapter->timer_service, SBT_1S, SBT_1S,
 		    ena_timer_service, (void *)adapter, 0);
 
+		taskqueue_enqueue(adapter->stats_tq, &adapter->stats_task);
+
 		adapter->up = true;
+
+		ena_unmask_all_io_irqs(adapter);
 	}
 
 	return (0);
@@ -2193,24 +2220,8 @@ ena_get_counter(if_t ifp, ift_counter cnt)
 {
 	struct ena_adapter *adapter;
 	struct ena_hw_stats *stats;
-	int rc;
 
 	adapter = if_getsoftc(ifp);
-
-	/*
-	 * Update only when asking for first counter and interface is up.
-	 * Usually asks for all statistics in sequence.
-	 */
-	if (adapter->up) {
-		if (cnt == 0) {
-			rc = ena_update_stats_counters(adapter);
-			if (rc) {
-				ena_trace(ENA_WARNING,
-				    "Error updating stats counters, rc = %d",
-				    rc);
-			}
-		}
-	}
 	stats = &adapter->hw_stats;
 
 	switch (cnt) {
@@ -2266,8 +2277,11 @@ ena_init(void *arg)
 {
 	struct ena_adapter *adapter = (struct ena_adapter *)arg;
 
-	if (adapter->up == false)
+	if (adapter->up == false) {
+		sx_xlock(&adapter->ioctl_sx);
 		ena_up(adapter);
+		sx_unlock(&adapter->ioctl_sx);
+	}
 
 	return;
 }
@@ -2285,16 +2299,16 @@ ena_ioctl(if_t ifp, u_long command, caddr_t data)
 	/*
 	 * Acquiring lock to prevent from running up and down routines parallel.
 	 */
-	sx_xlock(&adapter->ioctl_sx);
-
 	rc = 0;
 	switch (command) {
 	case SIOCSIFMTU:
+		sx_xlock(&adapter->ioctl_sx);
 		ena_down(adapter);
 
 		ena_change_mtu(ifp, ifr->ifr_mtu);
 
 		rc = ena_up(adapter);
+		sx_unlock(&adapter->ioctl_sx);
 		break;
 
 	case SIOCSIFFLAGS:
@@ -2306,11 +2320,16 @@ ena_ioctl(if_t ifp, u_long command, caddr_t data)
 					    "ioctl promisc/allmulti\n");
 				}
 			} else {
+				sx_xlock(&adapter->ioctl_sx);
 				rc = ena_up(adapter);
+				sx_unlock(&adapter->ioctl_sx);
 			}
 		} else {
-			if (ifp->if_drv_flags & IFF_DRV_RUNNING)
+			if (ifp->if_drv_flags & IFF_DRV_RUNNING) {
+				sx_xlock(&adapter->ioctl_sx);
 				ena_down(adapter);
+				sx_unlock(&adapter->ioctl_sx);
+			}
 		}
 		break;
 
@@ -2333,8 +2352,10 @@ ena_ioctl(if_t ifp, u_long command, caddr_t data)
 			}
 
 			if (reinit && (ifp->if_drv_flags & IFF_DRV_RUNNING)) {
+				sx_xlock(&adapter->ioctl_sx);
 				ena_down(adapter);
 				rc = ena_up(adapter);
+				sx_unlock(&adapter->ioctl_sx);
 			}
 		}
 
@@ -2343,8 +2364,6 @@ ena_ioctl(if_t ifp, u_long command, caddr_t data)
 		rc = ether_ioctl(ifp, command, data);
 		break;
 	}
-
-	sx_unlock(&adapter->ioctl_sx);
 
 	return (rc);
 }
@@ -2462,9 +2481,10 @@ ena_setup_ifnet(device_t pdev, struct ena_adapter *adapter,
 	if_setcapabilitiesbit(ifp, caps, 0);
 
 	/* TSO parameters */
-	ifp->if_hw_tsomax = ENA_TSO_MAXSIZE;
-	ifp->if_hw_tsomaxsegcount = ENA_TSO_NSEGS;
-	ifp->if_hw_tsomaxsegsize = MCLBYTES;
+	ifp->if_hw_tsomax = ENA_TSO_MAXSIZE -
+	    (ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN);
+	ifp->if_hw_tsomaxsegcount = adapter->max_tx_sgl_size - 1;
+	ifp->if_hw_tsomaxsegsize = ENA_TSO_MAXSIZE;
 
 	if_setifheaderlen(ifp, sizeof(struct ether_vlan_header));
 	if_setcapenable(ifp, if_getcapabilities(ifp));
@@ -2495,6 +2515,10 @@ ena_down(struct ena_adapter *adapter)
 		adapter->up = false;
 		if_setdrvflagbits(adapter->ifp, IFF_DRV_OACTIVE,
 		    IFF_DRV_RUNNING);
+
+		/* Drain task responsible for updating hw stats */
+		while (taskqueue_cancel(adapter->stats_tq, &adapter->stats_task, NULL))
+			taskqueue_drain(adapter->stats_tq, &adapter->stats_task);
 
 		ena_free_io_irq(adapter);
 
@@ -2601,7 +2625,35 @@ ena_tx_csum(struct ena_com_tx_ctx *ena_tx_ctx, struct mbuf *mbuf)
 }
 
 static int
-ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf *mbuf)
+ena_check_and_collapse_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
+{
+	struct ena_adapter *adapter;
+	struct mbuf *collapsed_mbuf;
+	int num_frags;
+
+	adapter = tx_ring->adapter;
+	num_frags = ena_mbuf_count(*mbuf);
+
+	/* One segment must be reserved for configuration descriptor. */
+	if (num_frags < adapter->max_tx_sgl_size)
+		return (0);
+	counter_u64_add(tx_ring->tx_stats.collapse, 1);
+
+	collapsed_mbuf = m_collapse(*mbuf, M_NOWAIT,
+	    adapter->max_tx_sgl_size - 1);
+	if (collapsed_mbuf == NULL) {
+		counter_u64_add(tx_ring->tx_stats.collapse_err, 1);
+		return (ENOMEM);
+	}
+
+	/* If mbuf was collapsed succesfully, original mbuf is released. */
+	*mbuf = collapsed_mbuf;
+
+	return (0);
+}
+
+static int
+ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 {
 	struct ena_adapter *adapter;
 	struct ena_tx_buffer *tx_info;
@@ -2617,40 +2669,40 @@ ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf *mbuf)
 	uint16_t ena_qid;
 	uint32_t len, nsegs, header_len;
 	int i, rc;
-	int nb_hw_desc, num_frags;
+	int nb_hw_desc;
 
 	ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
 	adapter = tx_ring->que->adapter;
 	ena_dev = adapter->ena_dev;
 	io_sq = &adapter->ena_dev->io_sq_queues[ena_qid];
 
-	ENA_ASSERT(mbuf, "mbuf is NULL\n");
+	ENA_ASSERT(*mbuf, "mbuf is NULL\n");
 
-	num_frags = ena_mbuf_count(mbuf);
-	if (num_frags > (adapter->max_tx_sgl_size - 2)) {
-		device_printf(adapter->pdev,
-		   "too many fragments. Last fragment: %d!\n", num_frags);
-		return (ENA_COM_INVAL);
+	rc = ena_check_and_collapse_mbuf(tx_ring, mbuf);
+	if (rc) {
+		ena_trace(ENA_WARNING,
+		    "Failed to collapse mbuf! err: %d", rc);
+		return (rc);
 	}
 
 	next_to_use = tx_ring->next_to_use;
 	req_id = tx_ring->free_tx_ids[next_to_use];
 	tx_info = &tx_ring->tx_buffer_info[req_id];
 
-	tx_info->mbuf = mbuf;
+	tx_info->mbuf = *mbuf;
 	tx_info->num_of_bufs = 0;
 
 	ena_buf = tx_info->bufs;
-	len = mbuf->m_len;
+	len = (*mbuf)->m_len;
 
-	ena_trace(ENA_DBG | ENA_TXPTH, "Tx: %d bytes", mbuf->m_pkthdr.len);
+	ena_trace(ENA_DBG | ENA_TXPTH, "Tx: %d bytes", (*mbuf)->m_pkthdr.len);
 
 	push_len = 0;
 	header_len = min_t(uint32_t, len, tx_ring->tx_max_header_size);
 	push_hdr = NULL;
 
 	rc = bus_dmamap_load_mbuf_sg(adapter->tx_buf_tag, tx_info->map,
-	    mbuf, segs, &nsegs, BUS_DMA_NOWAIT);
+	    *mbuf, segs, &nsegs, BUS_DMA_NOWAIT);
 
 	if (rc || (nsegs == 0)) {
 		ena_trace(ENA_WARNING,
@@ -2678,7 +2730,7 @@ ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf *mbuf)
 	ena_tx_ctx.header_len = header_len;
 
 	/* Set flags and meta data */
-	ena_tx_csum(&ena_tx_ctx, mbuf);
+	ena_tx_csum(&ena_tx_ctx, *mbuf);
 	/* Prepare the packet's descriptors and send them to device */
 	rc = ena_com_prepare_tx(io_sq, &ena_tx_ctx, &nb_hw_desc);
 	if (rc != 0) {
@@ -2692,7 +2744,7 @@ ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf *mbuf)
 
 	counter_enter();
 	counter_u64_add_protected(tx_ring->tx_stats.cnt, 1);
-	counter_u64_add_protected(tx_ring->tx_stats.bytes,  mbuf->m_pkthdr.len);
+	counter_u64_add_protected(tx_ring->tx_stats.bytes,  (*mbuf)->m_pkthdr.len);
 	counter_exit();
 
 	tx_info->tx_descs = nb_hw_desc;
@@ -2740,7 +2792,7 @@ ena_start_xmit(struct ena_ring *tx_ring)
 		if (ena_com_sq_empty_space(io_sq) < ENA_TX_CLEANUP_TRESHOLD)
 			ena_tx_cleanup(tx_ring);
 
-		if ((ret = ena_xmit_mbuf(tx_ring, mbuf)) != 0) {
+		if ((ret = ena_xmit_mbuf(tx_ring, &mbuf)) != 0) {
 			if (ret == ENA_COM_NO_MEM) {
 				drbr_putback(adapter->ifp, tx_ring->br, mbuf);
 			} else if (ret == ENA_COM_NO_SPACE) {
@@ -2753,10 +2805,11 @@ ena_start_xmit(struct ena_ring *tx_ring)
 			break;
 		}
 
+		drbr_advance(adapter->ifp, tx_ring->br);
+
 		if ((adapter->ifp->if_drv_flags & IFF_DRV_RUNNING) == 0)
 			return;
 
-		drbr_advance(adapter->ifp, tx_ring->br);
 		acum_pkts++;
 
 		BPF_MTAP(adapter->ifp, mbuf);
@@ -3572,6 +3625,30 @@ ena_attach(device_t pdev)
 		goto err_ifp_free;
 	}
 
+	/* Initialize reset task queue */
+	TASK_INIT(&adapter->reset_task, 0, ena_reset_task, adapter);
+	adapter->reset_tq = taskqueue_create("ena_reset_enqueue",
+	    M_WAITOK | M_ZERO, taskqueue_thread_enqueue, &adapter->reset_tq);
+	if (adapter->reset_tq == NULL) {
+		device_printf(adapter->pdev,
+		    "Unable to create reset task queue\n");
+		goto err_reset_tq;
+	}
+	taskqueue_start_threads(&adapter->reset_tq, 1, PI_NET,
+	    "%s rstq", device_get_nameunit(adapter->pdev));
+
+	/* Initialize task queue responsible for updating hw stats */
+	TASK_INIT(&adapter->stats_task, 0, ena_update_hw_stats, adapter);
+	adapter->stats_tq = taskqueue_create_fast("ena_stats_update",
+	    M_WAITOK | M_ZERO, taskqueue_thread_enqueue, &adapter->stats_tq);
+	if (adapter->stats_tq == NULL) {
+		device_printf(adapter->pdev,
+		    "Unable to create taskqueue for updating hw stats\n");
+		goto err_stats_tq;
+	}
+	taskqueue_start_threads(&adapter->stats_tq, 1, PI_REALTIME,
+	    "%s stats tq", device_get_nameunit(adapter->pdev));
+
 	/* Initialize statistics */
 	ena_alloc_counters((counter_u64_t *)&adapter->dev_stats,
 	    sizeof(struct ena_stats_dev));
@@ -3581,16 +3658,14 @@ ena_attach(device_t pdev)
 	/* Tell the stack that the interface is not active */
 	if_setdrvflagbits(adapter->ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
 
-	/* Initialize reset task queue */
-	TASK_INIT(&adapter->reset_task, 0, ena_reset_task, adapter);
-	adapter->reset_tq = taskqueue_create("ena_reset_enqueue",
-	    M_WAITOK | M_ZERO, taskqueue_thread_enqueue, &adapter->reset_tq);
-	taskqueue_start_threads(&adapter->reset_tq, 1, PI_NET,
-	    "%s rstq", device_get_nameunit(adapter->pdev));
-
 	adapter->running = true;
 	return (0);
 
+err_stats_tq:
+	taskqueue_free(adapter->reset_tq);
+err_reset_tq:
+	ena_free_mgmnt_irq(adapter);
+	ena_disable_msix(adapter);
 err_ifp_free:
 	if_detach(adapter->ifp);
 	if_free(adapter->ifp);
@@ -3639,7 +3714,11 @@ ena_detach(device_t pdev)
 		taskqueue_drain(adapter->reset_tq, &adapter->reset_task);
 	taskqueue_free(adapter->reset_tq);
 
+	sx_xlock(&adapter->ioctl_sx);
 	ena_down(adapter);
+	sx_unlock(&adapter->ioctl_sx);
+
+	taskqueue_free(adapter->stats_tq);
 
 	if (adapter->ifp != NULL) {
 		ether_ifdetach(adapter->ifp);

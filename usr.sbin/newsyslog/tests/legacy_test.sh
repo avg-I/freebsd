@@ -14,8 +14,8 @@ RFC3164_FMT='^[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2}'
 COUNT=0
 TMPDIR=$(pwd)/work
 if [ $? -ne 0 ]; then
-        echo "$0: Can't create temp dir, exiting..."
-        exit 1
+	echo "$0: Can't create temp dir, exiting..."
+	exit 1
 fi
 
 # Begin an individual test
@@ -380,9 +380,6 @@ tests_time_rotate() {
 
 	sleep 1.1
 
-	(
-	TODO="rotate time 2-4 fail today; bug 212160"
-
 	begin "rotate time 2 ${name_postfix}"
 	run_newsyslog ${newsyslog_args}
 	ckfe ${LOGFNAME}
@@ -404,7 +401,6 @@ tests_time_rotate() {
 	ckfe ${LOGFNAME}
 	chkfcnt 3 ${dir}${LOGFNAME}.*${ext}
 	end
-	)
 
 	begin "noaction ${name_postfix}"
 	ofiles=`ls -1 ${dir}${LOGFNAME}.*${ext} | tr -d '\n'`
@@ -436,8 +432,8 @@ tests_rfc5424() {
 	cknt ${dir}${LOGFNAME}.0${ext}
 	ckfe $LOGFNAME5424
 	cknt ${dir}${LOGFNAME5424}.0${ext}
-        ckrfc3164 ${LOGFNAME}
-        ckrfc5424 ${LOGFNAME5424}
+	ckrfc3164 ${LOGFNAME}
+	ckrfc5424 ${LOGFNAME5424}
 	end
 
 	begin "RFC-5424 - rotate normal 1 ${name_postfix}"
@@ -446,16 +442,16 @@ tests_rfc5424() {
 	ckfe ${dir}${LOGFNAME}.0${ext}
 	ckfe $LOGFNAME5424
 	ckfe ${dir}${LOGFNAME5424}.0${ext}
-        ckrfc3164 ${LOGFNAME}
-        ckrfc3164 ${dir}${LOGFNAME}.0${ext}
-        ckrfc5424 ${LOGFNAME5424}
-        ckrfc5424 ${dir}${LOGFNAME5424}.0${ext}
+	ckrfc3164 ${LOGFNAME}
+	ckrfc3164 ${dir}${LOGFNAME}.0${ext}
+	ckrfc5424 ${LOGFNAME5424}
+	ckrfc5424 ${dir}${LOGFNAME5424}.0${ext}
 	end
 
 	tmpdir_clean
 }
 
-echo 1..126
+echo 1..128
 mkdir -p ${TMPDIR}
 cd ${TMPDIR}
 

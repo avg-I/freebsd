@@ -155,6 +155,14 @@ ena_sysctl_add_stats(struct ena_adapter *adapter)
 		SYSCTL_ADD_COUNTER_U64(ctx, tx_list, OID_AUTO,
 		    "stops", CTLFLAG_RD,
 		    &tx_stats->queue_stop, "Queue stops");
+		SYSCTL_ADD_COUNTER_U64(ctx, tx_list, OID_AUTO,
+		        "mbuf_collapses", CTLFLAG_RD,
+		        &tx_stats->collapse,
+		        "Mbuf collapse count");
+		SYSCTL_ADD_COUNTER_U64(ctx, tx_list, OID_AUTO,
+		        "mbuf_collapse_err", CTLFLAG_RD,
+		        &tx_stats->collapse_err,
+		        "Mbuf collapse failures");
 
 		/* RX specific stats */
 		rx_node = SYSCTL_ADD_NODE(ctx, queue_list, OID_AUTO,
