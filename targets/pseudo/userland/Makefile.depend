@@ -100,11 +100,9 @@ DIRDEPS+= \
 	sbin/ipf/ipf \
 	sbin/ipf/ipfs \
 	sbin/ipf/ipfstat \
-	sbin/ipf/ipftest \
 	sbin/ipf/ipmon \
 	sbin/ipf/ipnat \
 	sbin/ipf/ippool \
-	sbin/ipf/ipresend \
 	sbin/ipf/libipf \
 	sbin/ipfw \
 	sbin/iscontrol \
@@ -182,7 +180,6 @@ DIRDEPS+= \
 	usr.bin/c99 \
 	usr.bin/calendar \
 	usr.bin/cap_mkdb \
-	usr.bin/catman \
 	usr.bin/chat \
 	usr.bin/checknr \
 	usr.bin/chkey \
@@ -709,7 +706,6 @@ DIRDEPS+= \
 	usr.sbin/pppctl \
 	usr.sbin/praliases \
 	usr.sbin/praudit \
-	usr.sbin/procctl \
 	usr.sbin/prometheus_sysctl_exporter \
 	usr.sbin/pstat \
 	usr.sbin/pw \

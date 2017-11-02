@@ -8,14 +8,17 @@ unix		?=	We run FreeBSD, not UNIX.
 #
 # MACHINE_CPUARCH defines a collection of MACHINE_ARCH.  Machines with
 # the same MACHINE_ARCH can run each other's binaries, so it necessarily
-# has word size and endian swizzled in.  However, support files for
+# has word size and endian swizzled in.  However, the source files for
 # these machines often are shared amongst all combinations of size
 # and/or endian.  This is called MACHINE_CPU in NetBSD, but that's used
 # for something different in FreeBSD.
 #
-MACHINE_CPUARCH=${MACHINE_ARCH:C/mips(n32|64)?(el)?(hf)?/mips/:C/arm(v6)?(eb|hf)?/arm/:C/powerpc(64|spe)/powerpc/:C/riscv64(sf)?/riscv/}
+__TO_CPUARCH=C/mips(n32|64)?(el)?(hf)?/mips/:C/arm(v[67])?(eb)?/arm/:C/powerpc(64|spe)/powerpc/:C/riscv64(sf)?/riscv/
+MACHINE_CPUARCH=${MACHINE_ARCH:${__TO_CPUARCH}}
 .endif
 
+__DEFAULT_YES_OPTIONS+= \
+	UNIFIED_OBJDIR
 
 # Some options we need now
 __DEFAULT_NO_OPTIONS= \
@@ -50,8 +53,11 @@ MK_META_MODE=	no
 .if ${MK_DIRDEPS_BUILD} == "yes"
 .sinclude <meta.sys.mk>
 .elif ${MK_META_MODE} == "yes"
+META_MODE+=	meta
+.if empty(.MAKEFLAGS:M-s)
 # verbose will show .MAKE.META.PREFIX for each target.
-META_MODE+=	meta verbose
+META_MODE+=	verbose
+.endif
 .if !defined(NO_META_MISSING)
 META_MODE+=	missing-meta=yes
 .endif

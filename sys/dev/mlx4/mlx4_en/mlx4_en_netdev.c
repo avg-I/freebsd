@@ -1771,7 +1771,8 @@ static int mlx4_en_change_mtu(struct net_device *dev, int new_mtu)
 	       (unsigned)dev->if_mtu, (unsigned)new_mtu);
 
 	if ((new_mtu < MLX4_EN_MIN_MTU) || (new_mtu > priv->max_mtu)) {
-		en_err(priv, "Bad MTU size:%d.\n", new_mtu);
+		en_err(priv, "Bad MTU size:%d, max %u.\n", new_mtu,
+		    priv->max_mtu);
 		return -EPERM;
 	}
 	mutex_lock(&mdev->state_lock);
@@ -1895,6 +1896,10 @@ static int mlx4_en_ioctl(struct ifnet *dev, u_long command, caddr_t data)
 	struct ifreq *ifr;
 	int error;
 	int mask;
+	struct ifrsskey *ifrk;
+	const u32 *key;
+	struct ifrsshash *ifrh;
+	u8 rss_mask;
 
 	error = 0;
 	mask = 0;
@@ -2023,6 +2028,39 @@ out:
 		break;
 	}
 #endif
+	case SIOCGIFRSSKEY:
+		ifrk = (struct ifrsskey *)data;
+		ifrk->ifrk_func = RSS_FUNC_TOEPLITZ;
+		mutex_lock(&mdev->state_lock);
+		key = mlx4_en_get_rss_key(priv, &ifrk->ifrk_keylen);
+		if (ifrk->ifrk_keylen > RSS_KEYLEN)
+			error = EINVAL;
+		else
+			memcpy(ifrk->ifrk_key, key, ifrk->ifrk_keylen);
+		mutex_unlock(&mdev->state_lock);
+		break;
+
+	case SIOCGIFRSSHASH:
+		mutex_lock(&mdev->state_lock);
+		rss_mask = mlx4_en_get_rss_mask(priv);
+		mutex_unlock(&mdev->state_lock);
+		ifrh = (struct ifrsshash *)data;
+		ifrh->ifrh_func = RSS_FUNC_TOEPLITZ;
+		ifrh->ifrh_types = 0;
+		if (rss_mask & MLX4_RSS_IPV4)
+			ifrh->ifrh_types |= RSS_TYPE_IPV4;
+		if (rss_mask & MLX4_RSS_TCP_IPV4)
+			ifrh->ifrh_types |= RSS_TYPE_TCP_IPV4;
+		if (rss_mask & MLX4_RSS_IPV6)
+			ifrh->ifrh_types |= RSS_TYPE_IPV6;
+		if (rss_mask & MLX4_RSS_TCP_IPV6)
+			ifrh->ifrh_types |= RSS_TYPE_TCP_IPV6;
+		if (rss_mask & MLX4_RSS_UDP_IPV4)
+			ifrh->ifrh_types |= RSS_TYPE_UDP_IPV4;
+		if (rss_mask & MLX4_RSS_UDP_IPV6)
+			ifrh->ifrh_types |= RSS_TYPE_UDP_IPV6;
+		break;
+
 	default:
 		error = ether_ioctl(dev, command, data);
 		break;
@@ -2681,6 +2719,8 @@ static void mlx4_en_sysctl_stat(struct mlx4_en_priv *priv)
 	SYSCTL_ADD_ULONG(ctx, node_list, OID_AUTO, "tx_chksum_offload",
 	    CTLFLAG_RD, &priv->port_stats.tx_chksum_offload,
 	    "TX checksum offloads");
+	SYSCTL_ADD_ULONG(ctx, node_list, OID_AUTO, "defrag_attempts", CTLFLAG_RD,
+	    &priv->port_stats.defrag_attempts, "Oversized chains defragged");
 
 	/* Could strdup the names and add in a loop.  This is simpler. */
 	SYSCTL_ADD_ULONG(ctx, node_list, OID_AUTO, "rx_bytes", CTLFLAG_RD,
@@ -2774,6 +2814,10 @@ static void mlx4_en_sysctl_stat(struct mlx4_en_priv *priv)
 		    CTLFLAG_RD, &tx_ring->packets, "TX packets");
 		SYSCTL_ADD_ULONG(ctx, ring_list, OID_AUTO, "bytes",
 		    CTLFLAG_RD, &tx_ring->bytes, "TX bytes");
+		SYSCTL_ADD_ULONG(ctx, ring_list, OID_AUTO, "tso_packets",
+		    CTLFLAG_RD, &tx_ring->tso_packets, "TSO packets");
+		SYSCTL_ADD_ULONG(ctx, ring_list, OID_AUTO, "defrag_attempts",
+		    CTLFLAG_RD, &tx_ring->defrag_attempts, "Oversized chains defragged");
 	}
 
 	for (i = 0; i < priv->rx_ring_num; i++) {
